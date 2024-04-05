@@ -239,7 +239,8 @@ impl Transport {
             };
         } else {
             log::error!(
-                "Discarding Language Server response without a request (id={:?}) {:?}",
+                "{}: Discarding Language Server response without a request (id={:?}) {:?}",
+                self.name,
                 id,
                 result
             );
@@ -362,6 +363,7 @@ impl Transport {
         }
 
         // TODO: events that use capabilities need to do the right thing
+        let language_server_name = &transport.name;
 
         loop {
             tokio::select! {
@@ -378,7 +380,6 @@ impl Transport {
                         method: lsp_types::notification::Initialized::METHOD.to_string(),
                         params: jsonrpc::Params::None,
                     }));
-                    let language_server_name = &transport.name;
                     match transport.process_server_message(&client_tx, notification, language_server_name).await {
                         Ok(_) => {}
                         Err(err) => {
@@ -388,7 +389,7 @@ impl Transport {
 
                     // drain the pending queue and send payloads to server
                     for msg in pending_messages.drain(..) {
-                        log::info!("Draining pending message {:?}", msg);
+                        log::info!("{language_server_name}: Draining pending message {:?}", msg);
                         match transport.send_payload_to_server(&mut server_stdin, msg).await {
                             Ok(_) => {}
                             Err(err) => {
@@ -400,7 +401,7 @@ impl Transport {
                 msg = client_rx.recv() => {
                     if let Some(msg) = msg {
                         if is_pending && is_shutdown(&msg) {
-                            log::info!("Language server not initialized, shutting down");
+                            log::info!("{language_server_name}: Language server not initialized, shutting down");
                             break;
                         } else if is_pending && !is_initialize(&msg) {
                             // ignore notifications
@@ -408,7 +409,7 @@ impl Transport {
                                 continue;
                             }
 
-                            log::info!("Language server not initialized, delaying request");
+                            log::info!("{language_server_name}: Language server not initialized, delaying request");
                             pending_messages.push(msg);
                         } else {
                             match transport.send_payload_to_server(&mut server_stdin, msg).await {

@@ -122,7 +122,7 @@ impl Handler {
                                 typ: lsp::FileChangeType::CHANGED,
                             }]))
                         {
-                            log::warn!("Failed to send didChangeWatchedFiles notification to client: {err}");
+                            log::warn!("{}: Failed to send didChangeWatchedFiles notification to client: {err}", client.name());
                         }
                         true
                     });

@@ -359,7 +359,7 @@ impl Client {
                 "utf-16" => Some(OffsetEncoding::Utf16),
                 "utf-32" => Some(OffsetEncoding::Utf32),
                 encoding => {
-                    log::error!("Server provided invalid position encoding {encoding}, defaulting to utf-16");
+                    log::error!("{}: Server provided invalid position encoding {encoding}, defaulting to utf-16", self.name);
                     None
                 },
             })
@@ -505,7 +505,7 @@ impl Client {
 
     pub(crate) async fn initialize(&self, enable_snippets: bool) -> Result<lsp::InitializeResult> {
         if let Some(config) = &self.config {
-            log::info!("Using custom LSP config: {}", config);
+            log::info!("{}: Using custom LSP config: {}", self.name, config);
         }
 
         #[allow(deprecated)]
@@ -689,7 +689,11 @@ impl Client {
     /// Forcefully shuts down the language server ignoring any errors.
     pub async fn force_shutdown(&self) -> Result<()> {
         if let Err(e) = self.shutdown().await {
-            log::warn!("language server failed to terminate gracefully - {}", e);
+            log::warn!(
+                "{}: language server failed to terminate gracefully - {}",
+                self.name,
+                e
+            );
         }
         self.exit().await
     }
