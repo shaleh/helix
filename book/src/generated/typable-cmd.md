@@ -87,3 +87,4 @@
 | `:redraw` | Clear and re-render the whole UI |
 | `:move` | Move the current buffer and its corresponding file to a different path |
 | `:yank-diagnostic` | Yank diagnostic(s) under primary cursor to register, or clipboard by default |
+| `:help`, `:h` | Open documentation for a command or keybind. |
