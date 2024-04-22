@@ -6,7 +6,7 @@ use helix_lsp::{
         NumberOrString,
     },
     util::{diagnostic_to_lsp_diagnostic, lsp_range_to_range, range_to_lsp_range},
-    Client, OffsetEncoding,
+    Client, LanguageServerId, OffsetEncoding,
 };
 use tokio_stream::StreamExt;
 use tui::{text::Span, widgets::Row};
@@ -542,7 +542,7 @@ pub fn workspace_diagnostics_picker(cx: &mut Context) {
 
 struct CodeActionOrCommandItem {
     lsp_item: lsp::CodeActionOrCommand,
-    language_server_id: usize,
+    language_server_id: LanguageServerId,
 }
 
 impl ui::menu::Item for CodeActionOrCommandItem {
@@ -1129,7 +1129,7 @@ pub fn rename_symbol(cx: &mut Context) {
     fn create_rename_prompt(
         editor: &Editor,
         prefill: String,
-        language_server_id: Option<usize>,
+        language_server_id: Option<LanguageServerId>,
     ) -> Box<ui::Prompt> {
         let prompt = ui::Prompt::new(
             "rename-to:".into(),
