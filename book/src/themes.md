@@ -36,13 +36,6 @@ For inspiration, you can find the default `theme.toml`
 user-submitted themes
 [here](https://github.com/helix-editor/helix/blob/master/runtime/themes).
 
-### Using the linter
-
-Use the supplied linting tool to check for errors and missing scopes:
-
-```sh
-cargo xtask themelint onedark # replace onedark with <name>
-```
 
 ## The details of theme creation
 
@@ -70,6 +63,7 @@ over it and is merged into the default palette.
 
 | Color Name      |
 | ---             |
+| `default`       |
 | `black`         |
 | `red`           |
 | `green`         |
@@ -154,6 +148,7 @@ We use a similar set of scopes as
 
 - `type` - Types
   - `builtin` - Primitive types provided by the language (`int`, `usize`)
+  - `parameter` - Generic type parameters (`T`)
   - `enum`
     - `variant`
 - `constructor`
@@ -244,9 +239,13 @@ We use a similar set of scopes as
 
 - `diff` - version control changes
   - `plus` - additions
+    - `gutter` - gutter indicator
   - `minus` - deletions
+    - `gutter` - gutter indicator
   - `delta` - modifications
     - `moved` - renamed or moved files/changes
+    - `conflict` - merge conflicts
+    - `gutter` - gutter indicator
 
 #### Interface
 
@@ -278,8 +277,11 @@ These scopes are used for theming the editor interface:
 | `ui.cursor.primary.normal`        |                                                                                                |
 | `ui.cursor.primary.insert`        |                                                                                                |
 | `ui.cursor.primary.select`        |                                                                                                |
+| `ui.debug.breakpoint`             | Breakpoint indicator, found in the gutter                                                      |
+| `ui.debug.active`                 | Indicator for the line at which debugging execution is paused at, found in the gutter          |
 | `ui.gutter`                       | Gutter                                                                                         |
 | `ui.gutter.selected`              | Gutter for the line the cursor is on                                                           |
+| `ui.highlight.frameline`          | Line at which debugging execution is paused at                                                 |
 | `ui.linenr`                       | Line numbers                                                                                   |
 | `ui.linenr.selected`              | Line number for the line the cursor is on                                                      |
 | `ui.statusline`                   | Statusline                                                                                     |
@@ -288,12 +290,15 @@ These scopes are used for theming the editor interface:
 | `ui.statusline.insert`            | Statusline mode during insert mode ([only if `editor.color-modes` is enabled][editor-section]) |
 | `ui.statusline.select`            | Statusline mode during select mode ([only if `editor.color-modes` is enabled][editor-section]) |
 | `ui.statusline.separator`         | Separator character in statusline                                                              |
+| `ui.bufferline`                   | Style for the buffer line                                                                      |
+| `ui.bufferline.active`            | Style for the active buffer in buffer line                                                        |
+| `ui.bufferline.background`        | Style for bufferline background                                                                |
 | `ui.popup`                        | Documentation popups (e.g. Space + k)                                                          |
 | `ui.popup.info`                   | Prompt for multiple key options                                                                |
 | `ui.window`                       | Borderlines separating splits                                                                  |
 | `ui.help`                         | Description box for commands                                                                   |
-| `ui.text`                         | Command prompts, popup text, etc.                                                              |
-| `ui.text.focus`                   |                                                                                                |
+| `ui.text`                         | Default text style, command prompts, popup text, etc.                                          |
+| `ui.text.focus`                   | The currently selected line in the picker                                                      |
 | `ui.text.inactive`                | Same as `ui.text` but when the text is inactive (e.g. suggestions)                             |
 | `ui.text.info`                    | The key: command text in `ui.popup.info` boxes                                                 |
 | `ui.virtual.ruler`                | Ruler columns (see the [`editor.rulers` config][editor-section])                               |
@@ -303,6 +308,7 @@ These scopes are used for theming the editor interface:
 | `ui.virtual.inlay-hint.parameter` | Style for inlay hints of kind `parameter` (LSPs are not required to set a kind)                |
 | `ui.virtual.inlay-hint.type`      | Style for inlay hints of kind `type` (LSPs are not required to set a kind)                     |
 | `ui.virtual.wrap`                 | Soft-wrap indicator (see the [`editor.soft-wrap` config][editor-section])                      |
+| `ui.virtual.jump-label`           | Style for virtual jump labels                                                                  |
 | `ui.menu`                         | Code and command completion menus                                                              |
 | `ui.menu.selected`                | Selected autocomplete item                                                                     |
 | `ui.menu.scroll`                  | `fg` sets thumb color, `bg` sets track color of scrollbar                                      |
@@ -322,5 +328,7 @@ These scopes are used for theming the editor interface:
 | `diagnostic.info`                 | Diagnostics info (editing area)                                                                |
 | `diagnostic.warning`              | Diagnostics warning (editing area)                                                             |
 | `diagnostic.error`                | Diagnostics error (editing area)                                                               |
+| `diagnostic.unnecessary`          | Diagnostics with unnecessary tag (editing area)                                                |
+| `diagnostic.deprecated`           | Diagnostics with deprecated tag (editing area)                                                 |
 
 [editor-section]: ./configuration.md#editor-section

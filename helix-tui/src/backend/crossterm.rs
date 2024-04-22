@@ -32,19 +32,34 @@ fn vte_version() -> Option<usize> {
 }
 
 /// Describes terminal capabilities like extended underline, truecolor, etc.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct Capabilities {
     /// Support for undercurled, underdashed, etc.
     has_extended_underlines: bool,
+    /// Support for resetting the cursor style back to normal.
+    reset_cursor_command: String,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self {
+            has_extended_underlines: false,
+            reset_cursor_command: "\x1B[0 q".to_string(),
+        }
+    }
 }
 
 impl Capabilities {
     /// Detect capabilities from the terminfo database located based
     /// on the $TERM environment variable. If detection fails, returns
-    /// a default value where no capability is supported.
+    /// a default value where no capability is supported, or just undercurl
+    /// if config.undercurl is set.
     pub fn from_env_or_default(config: &EditorConfig) -> Self {
         match termini::TermInfo::from_env() {
-            Err(_) => Capabilities::default(),
+            Err(_) => Capabilities {
+                has_extended_underlines: config.undercurl,
+                ..Capabilities::default()
+            },
             Ok(t) => Capabilities {
                 // Smulx, VTE: https://unix.stackexchange.com/a/696253/246284
                 // Su (used by kitty): https://sw.kovidgoyal.net/kitty/underlines
@@ -54,6 +69,10 @@ impl Capabilities {
                     || t.extended_cap("Su").is_some()
                     || vte_version() >= Some(5102)
                     || matches!(term_program().as_deref(), Some("WezTerm")),
+                reset_cursor_command: t
+                    .utf8_string_cap(termini::StringCapability::CursorNormal)
+                    .unwrap_or("\x1B[0 q")
+                    .to_string(),
             },
         }
     }
@@ -63,6 +82,8 @@ pub struct CrosstermBackend<W: Write> {
     buffer: W,
     capabilities: Capabilities,
     supports_keyboard_enhancement_protocol: OnceCell<bool>,
+    mouse_capture_enabled: bool,
+    supports_bracketed_paste: bool,
 }
 
 impl<W> CrosstermBackend<W>
@@ -70,29 +91,34 @@ where
     W: Write,
 {
     pub fn new(buffer: W, config: &EditorConfig) -> CrosstermBackend<W> {
+        // helix is not usable without colors, but crossterm will disable
+        // them by default if NO_COLOR is set in the environment. Override
+        // this behaviour.
+        crossterm::style::force_color_output(true);
         CrosstermBackend {
             buffer,
             capabilities: Capabilities::from_env_or_default(config),
             supports_keyboard_enhancement_protocol: OnceCell::new(),
+            mouse_capture_enabled: false,
+            supports_bracketed_paste: true,
         }
     }
 
     #[inline]
-    fn supports_keyboard_enhancement_protocol(&self) -> io::Result<bool> {
-        self.supports_keyboard_enhancement_protocol
-            .get_or_try_init(|| {
+    fn supports_keyboard_enhancement_protocol(&self) -> bool {
+        *self.supports_keyboard_enhancement_protocol
+            .get_or_init(|| {
                 use std::time::Instant;
 
                 let now = Instant::now();
-                let support = terminal::supports_keyboard_enhancement();
+                let supported = matches!(terminal::supports_keyboard_enhancement(), Ok(true));
                 log::debug!(
                     "The keyboard enhancement protocol is {}supported in this terminal (checked in {:?})",
-                    if matches!(support, Ok(true)) { "" } else { "not " },
+                    if supported { "" } else { "not " },
                     Instant::now().duration_since(now)
                 );
-                support
+                supported
             })
-            .copied()
     }
 }
 
@@ -118,14 +144,22 @@ where
         execute!(
             self.buffer,
             terminal::EnterAlternateScreen,
-            EnableBracketedPaste,
             EnableFocusChange
         )?;
+        match execute!(self.buffer, EnableBracketedPaste,) {
+            Err(err) if err.kind() == io::ErrorKind::Unsupported => {
+                log::warn!("Bracketed paste is not supported on this terminal.");
+                self.supports_bracketed_paste = false;
+            }
+            Err(err) => return Err(err),
+            Ok(_) => (),
+        };
         execute!(self.buffer, terminal::Clear(terminal::ClearType::All))?;
         if config.enable_mouse_capture {
             execute!(self.buffer, EnableMouseCapture)?;
+            self.mouse_capture_enabled = true;
         }
-        if self.supports_keyboard_enhancement_protocol()? {
+        if self.supports_keyboard_enhancement_protocol() {
             execute!(
                 self.buffer,
                 PushKeyboardEnhancementFlags(
@@ -137,18 +171,34 @@ where
         Ok(())
     }
 
+    fn reconfigure(&mut self, config: Config) -> io::Result<()> {
+        if self.mouse_capture_enabled != config.enable_mouse_capture {
+            if config.enable_mouse_capture {
+                execute!(self.buffer, EnableMouseCapture)?;
+            } else {
+                execute!(self.buffer, DisableMouseCapture)?;
+            }
+            self.mouse_capture_enabled = config.enable_mouse_capture;
+        }
+
+        Ok(())
+    }
+
     fn restore(&mut self, config: Config) -> io::Result<()> {
         // reset cursor shape
-        write!(self.buffer, "\x1B[0 q")?;
+        self.buffer
+            .write_all(self.capabilities.reset_cursor_command.as_bytes())?;
         if config.enable_mouse_capture {
             execute!(self.buffer, DisableMouseCapture)?;
         }
-        if self.supports_keyboard_enhancement_protocol()? {
+        if self.supports_keyboard_enhancement_protocol() {
             execute!(self.buffer, PopKeyboardEnhancementFlags)?;
+        }
+        if self.supports_bracketed_paste {
+            execute!(self.buffer, DisableBracketedPaste,)?;
         }
         execute!(
             self.buffer,
-            DisableBracketedPaste,
             DisableFocusChange,
             terminal::LeaveAlternateScreen
         )?;
@@ -164,12 +214,8 @@ where
         // disable without calling enable previously
         let _ = execute!(stdout, DisableMouseCapture);
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
-        execute!(
-            stdout,
-            DisableBracketedPaste,
-            DisableFocusChange,
-            terminal::LeaveAlternateScreen
-        )?;
+        let _ = execute!(stdout, DisableBracketedPaste);
+        execute!(stdout, DisableFocusChange, terminal::LeaveAlternateScreen)?;
         terminal::disable_raw_mode()
     }
 
@@ -186,7 +232,7 @@ where
         for (x, y, cell) in content {
             // Move the cursor if the previous location was not (x - 1, y)
             if !matches!(last_pos, Some(p) if x == p.0 + 1 && y == p.1) {
-                map_error(queue!(self.buffer, MoveTo(x, y)))?;
+                queue!(self.buffer, MoveTo(x, y))?;
             }
             last_pos = Some((x, y));
             if cell.modifier != modifier {
@@ -199,12 +245,12 @@ where
             }
             if cell.fg != fg {
                 let color = CColor::from(cell.fg);
-                map_error(queue!(self.buffer, SetForegroundColor(color)))?;
+                queue!(self.buffer, SetForegroundColor(color))?;
                 fg = cell.fg;
             }
             if cell.bg != bg {
                 let color = CColor::from(cell.bg);
-                map_error(queue!(self.buffer, SetBackgroundColor(color)))?;
+                queue!(self.buffer, SetBackgroundColor(color))?;
                 bg = cell.bg;
             }
 
@@ -212,7 +258,7 @@ where
             if self.capabilities.has_extended_underlines {
                 if cell.underline_color != underline_color {
                     let color = CColor::from(cell.underline_color);
-                    map_error(queue!(self.buffer, SetUnderlineColor(color)))?;
+                    queue!(self.buffer, SetUnderlineColor(color))?;
                     underline_color = cell.underline_color;
                 }
             } else {
@@ -224,24 +270,24 @@ where
 
             if new_underline_style != underline_style {
                 let attr = CAttribute::from(new_underline_style);
-                map_error(queue!(self.buffer, SetAttribute(attr)))?;
+                queue!(self.buffer, SetAttribute(attr))?;
                 underline_style = new_underline_style;
             }
 
-            map_error(queue!(self.buffer, Print(&cell.symbol)))?;
+            queue!(self.buffer, Print(&cell.symbol))?;
         }
 
-        map_error(queue!(
+        queue!(
             self.buffer,
             SetUnderlineColor(CColor::Reset),
             SetForegroundColor(CColor::Reset),
             SetBackgroundColor(CColor::Reset),
             SetAttribute(CAttribute::Reset)
-        ))
+        )
     }
 
     fn hide_cursor(&mut self) -> io::Result<()> {
-        map_error(execute!(self.buffer, Hide))
+        execute!(self.buffer, Hide)
     }
 
     fn show_cursor(&mut self, kind: CursorKind) -> io::Result<()> {
@@ -251,7 +297,7 @@ where
             CursorKind::Underline => SetCursorStyle::SteadyUnderScore,
             CursorKind::Hidden => unreachable!(),
         };
-        map_error(execute!(self.buffer, Show, shape))
+        execute!(self.buffer, Show, shape)
     }
 
     fn get_cursor(&mut self) -> io::Result<(u16, u16)> {
@@ -260,11 +306,11 @@ where
     }
 
     fn set_cursor(&mut self, x: u16, y: u16) -> io::Result<()> {
-        map_error(execute!(self.buffer, MoveTo(x, y)))
+        execute!(self.buffer, MoveTo(x, y))
     }
 
     fn clear(&mut self) -> io::Result<()> {
-        map_error(execute!(self.buffer, Clear(ClearType::All)))
+        execute!(self.buffer, Clear(ClearType::All))
     }
 
     fn size(&self) -> io::Result<Rect> {
@@ -277,10 +323,6 @@ where
     fn flush(&mut self) -> io::Result<()> {
         self.buffer.flush()
     }
-}
-
-fn map_error(error: crossterm::Result<()>) -> io::Result<()> {
-    error.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
 }
 
 #[derive(Debug)]
@@ -297,57 +339,63 @@ impl ModifierDiff {
         //use crossterm::Attribute;
         let removed = self.from - self.to;
         if removed.contains(Modifier::REVERSED) {
-            map_error(queue!(w, SetAttribute(CAttribute::NoReverse)))?;
+            queue!(w, SetAttribute(CAttribute::NoReverse))?;
         }
         if removed.contains(Modifier::BOLD) {
-            map_error(queue!(w, SetAttribute(CAttribute::NormalIntensity)))?;
+            queue!(w, SetAttribute(CAttribute::NormalIntensity))?;
             if self.to.contains(Modifier::DIM) {
-                map_error(queue!(w, SetAttribute(CAttribute::Dim)))?;
+                queue!(w, SetAttribute(CAttribute::Dim))?;
             }
         }
         if removed.contains(Modifier::ITALIC) {
-            map_error(queue!(w, SetAttribute(CAttribute::NoItalic)))?;
+            queue!(w, SetAttribute(CAttribute::NoItalic))?;
         }
         if removed.contains(Modifier::DIM) {
-            map_error(queue!(w, SetAttribute(CAttribute::NormalIntensity)))?;
+            queue!(w, SetAttribute(CAttribute::NormalIntensity))?;
         }
         if removed.contains(Modifier::CROSSED_OUT) {
-            map_error(queue!(w, SetAttribute(CAttribute::NotCrossedOut)))?;
+            queue!(w, SetAttribute(CAttribute::NotCrossedOut))?;
         }
         if removed.contains(Modifier::SLOW_BLINK) || removed.contains(Modifier::RAPID_BLINK) {
-            map_error(queue!(w, SetAttribute(CAttribute::NoBlink)))?;
+            queue!(w, SetAttribute(CAttribute::NoBlink))?;
+        }
+        if removed.contains(Modifier::HIDDEN) {
+            queue!(w, SetAttribute(CAttribute::NoHidden))?;
         }
 
         let added = self.to - self.from;
         if added.contains(Modifier::REVERSED) {
-            map_error(queue!(w, SetAttribute(CAttribute::Reverse)))?;
+            queue!(w, SetAttribute(CAttribute::Reverse))?;
         }
         if added.contains(Modifier::BOLD) {
-            map_error(queue!(w, SetAttribute(CAttribute::Bold)))?;
+            queue!(w, SetAttribute(CAttribute::Bold))?;
         }
         if added.contains(Modifier::ITALIC) {
-            map_error(queue!(w, SetAttribute(CAttribute::Italic)))?;
+            queue!(w, SetAttribute(CAttribute::Italic))?;
         }
         if added.contains(Modifier::DIM) {
-            map_error(queue!(w, SetAttribute(CAttribute::Dim)))?;
+            queue!(w, SetAttribute(CAttribute::Dim))?;
         }
         if added.contains(Modifier::CROSSED_OUT) {
-            map_error(queue!(w, SetAttribute(CAttribute::CrossedOut)))?;
+            queue!(w, SetAttribute(CAttribute::CrossedOut))?;
         }
         if added.contains(Modifier::SLOW_BLINK) {
-            map_error(queue!(w, SetAttribute(CAttribute::SlowBlink)))?;
+            queue!(w, SetAttribute(CAttribute::SlowBlink))?;
         }
         if added.contains(Modifier::RAPID_BLINK) {
-            map_error(queue!(w, SetAttribute(CAttribute::RapidBlink)))?;
+            queue!(w, SetAttribute(CAttribute::RapidBlink))?;
+        }
+        if added.contains(Modifier::HIDDEN) {
+            queue!(w, SetAttribute(CAttribute::Hidden))?;
         }
 
         Ok(())
     }
 }
 
-/// Crossterm uses semicolon as a seperator for colors
-/// this is actually not spec compliant (altough commonly supported)
-/// However the correct approach is to use colons as a seperator.
+/// Crossterm uses semicolon as a separator for colors
+/// this is actually not spec compliant (although commonly supported)
+/// However the correct approach is to use colons as a separator.
 /// This usually doesn't make a difference for emulators that do support colored underlines.
 /// However terminals that do not support colored underlines will ignore underlines colors with colons
 /// while escape sequences with semicolons are always processed which leads to weird visual artifacts.
@@ -392,7 +440,7 @@ impl Command for SetUnderlineColor {
     }
 
     #[cfg(windows)]
-    fn execute_winapi(&self) -> crossterm::Result<()> {
+    fn execute_winapi(&self) -> io::Result<()> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             "SetUnderlineColor not supported by winapi.",

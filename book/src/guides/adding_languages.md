@@ -9,6 +9,7 @@ below.
    necessary configuration for the new language. For more information on
    language configuration, refer to the
    [language configuration section](../languages.md) of the documentation.
+   A new language server can be added by extending the `[language-server]` table in the same file.
 2. If you are adding a new language or updating an existing language server
    configuration, run the command `cargo xtask docgen` to update the
    [Language Support](../lang-support.md) documentation.
@@ -35,6 +36,7 @@ below.
 3. Refer to the
    [tree-sitter website](https://tree-sitter.github.io/tree-sitter/syntax-highlighting#queries)
    for more information on writing queries.
+4. A list of highlight captures can be found [on the themes page](https://docs.helix-editor.com/themes.html#scopes).
 
 > 💡 In Helix, the first matching query takes precedence when evaluating
 > queries, which is different from other editors such as Neovim where the last
@@ -50,3 +52,4 @@ below.
   grammars.
 - If a parser is causing a segfault, or you want to remove it, make sure to
   remove the compiled parser located at `runtime/grammars/<name>.so`.
+- If you are attempting to add queries and Helix is unable to locate them, ensure that the environment variable `HELIX_RUNTIME` is set to the location of the `runtime` folder you're developing in.
