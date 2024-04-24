@@ -36,7 +36,7 @@ use crate::{
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashSet},
-    fmt::Write,
+    fmt::{Display, Write},
     future::Future,
     path::{Path, PathBuf},
 };
@@ -800,13 +800,13 @@ pub enum ApplyEditErrorKind {
     // InvalidEdit,
 }
 
-impl ToString for ApplyEditErrorKind {
-    fn to_string(&self) -> String {
+impl Display for ApplyEditErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ApplyEditErrorKind::DocumentChanged => "document has changed".to_string(),
-            ApplyEditErrorKind::FileNotFound => "file not found".to_string(),
-            ApplyEditErrorKind::UnknownURISchema => "URI schema not supported".to_string(),
-            ApplyEditErrorKind::IoError(err) => err.to_string(),
+            ApplyEditErrorKind::DocumentChanged => write!(f, "document has changed"),
+            ApplyEditErrorKind::FileNotFound => write!(f, "file not found"),
+            ApplyEditErrorKind::UnknownURISchema => write!(f, "URI schema not supported"),
+            ApplyEditErrorKind::IoError(err) => write!(f, "{}", err),
         }
     }
 }

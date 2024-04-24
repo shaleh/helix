@@ -440,6 +440,7 @@ fn get_node_end_line(node: Node, new_line_byte_pos: Option<usize>) -> usize {
     node_line
 }
 
+#[allow(clippy::get_first)]
 fn query_indents<'a>(
     query: &Query,
     syntax: &Syntax,
@@ -740,7 +741,7 @@ fn init_indent_query<'a, 'b>(
 
         crate::syntax::PARSER.with(|ts_parser| {
             let mut ts_parser = ts_parser.borrow_mut();
-            let mut cursor = ts_parser.cursors.pop().unwrap_or_else(QueryCursor::new);
+            let mut cursor = ts_parser.cursors.pop().unwrap_or_default();
             let query_result = query_indents(
                 query,
                 syntax,

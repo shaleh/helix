@@ -382,7 +382,7 @@ impl<T: Item + 'static> Picker<T> {
                     CaseMatching::Smart,
                     pattern.starts_with(&self.previous_pattern),
                 );
-                self.previous_pattern = pattern.clone();
+                self.previous_pattern.clone_from(pattern);
             }
         }
         EventResult::Consumed(None)

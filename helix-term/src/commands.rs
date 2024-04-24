@@ -3043,43 +3043,43 @@ fn jumplist_picker(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+pub struct FileChangeData {
+    cwd: PathBuf,
+    style_untracked: Style,
+    style_modified: Style,
+    style_conflict: Style,
+    style_deleted: Style,
+    style_renamed: Style,
+}
+
+impl Item for FileChange {
+    type Data = FileChangeData;
+
+    fn format(&self, data: &Self::Data) -> Row {
+        let process_path = |path: &PathBuf| {
+            path.strip_prefix(&data.cwd)
+                .unwrap_or(path)
+                .display()
+                .to_string()
+        };
+
+        let (sign, style, content) = match self {
+            Self::Untracked { path } => ("[+]", data.style_untracked, process_path(path)),
+            Self::Modified { path } => ("[~]", data.style_modified, process_path(path)),
+            Self::Conflict { path } => ("[x]", data.style_conflict, process_path(path)),
+            Self::Deleted { path } => ("[-]", data.style_deleted, process_path(path)),
+            Self::Renamed { from_path, to_path } => (
+                "[>]",
+                data.style_renamed,
+                format!("{} -> {}", process_path(from_path), process_path(to_path)),
+            ),
+        };
+
+        Row::new([Cell::from(Span::styled(sign, style)), Cell::from(content)])
+    }
+}
+
 fn changed_file_picker(cx: &mut Context) {
-    pub struct FileChangeData {
-        cwd: PathBuf,
-        style_untracked: Style,
-        style_modified: Style,
-        style_conflict: Style,
-        style_deleted: Style,
-        style_renamed: Style,
-    }
-
-    impl Item for FileChange {
-        type Data = FileChangeData;
-
-        fn format(&self, data: &Self::Data) -> Row {
-            let process_path = |path: &PathBuf| {
-                path.strip_prefix(&data.cwd)
-                    .unwrap_or(path)
-                    .display()
-                    .to_string()
-            };
-
-            let (sign, style, content) = match self {
-                Self::Untracked { path } => ("[+]", data.style_untracked, process_path(path)),
-                Self::Modified { path } => ("[~]", data.style_modified, process_path(path)),
-                Self::Conflict { path } => ("[x]", data.style_conflict, process_path(path)),
-                Self::Deleted { path } => ("[-]", data.style_deleted, process_path(path)),
-                Self::Renamed { from_path, to_path } => (
-                    "[>]",
-                    data.style_renamed,
-                    format!("{} -> {}", process_path(from_path), process_path(to_path)),
-                ),
-            };
-
-            Row::new([Cell::from(Span::styled(sign, style)), Cell::from(content)])
-        }
-    }
-
     let cwd = helix_stdx::env::current_working_dir();
     if !cwd.exists() {
         cx.editor

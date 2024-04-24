@@ -75,7 +75,7 @@ impl From<(&char, &char)> for Pair {
 
 impl AutoPairs {
     /// Make a new AutoPairs set with the given pairs and default conditions.
-    pub fn new<'a, V: 'a, A>(pairs: V) -> Self
+    pub fn new<V, A>(pairs: V) -> Self
     where
         V: IntoIterator<Item = A>,
         A: Into<Pair>,

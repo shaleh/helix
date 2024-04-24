@@ -359,7 +359,7 @@ fn debug_parameter_prompt(
 
             let mut value = input.to_owned();
             if value.is_empty() {
-                value = default_val.clone();
+                value.clone_from(&default_val);
             }
             params.push(value);
 

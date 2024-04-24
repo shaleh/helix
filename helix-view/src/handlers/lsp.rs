@@ -4,6 +4,8 @@ use crate::{DocumentId, ViewId};
 use helix_lsp::util::generate_transaction_from_edits;
 use helix_lsp::{lsp, OffsetEncoding};
 
+use std::fmt::Display;
+
 pub enum CompletionEvent {
     /// Auto completion was triggered by typing a word char
     AutoTrigger {
@@ -60,13 +62,13 @@ pub enum ApplyEditErrorKind {
     // InvalidEdit,
 }
 
-impl ToString for ApplyEditErrorKind {
-    fn to_string(&self) -> String {
+impl Display for ApplyEditErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ApplyEditErrorKind::DocumentChanged => "document has changed".to_string(),
-            ApplyEditErrorKind::FileNotFound => "file not found".to_string(),
-            ApplyEditErrorKind::UnknownURISchema => "URI schema not supported".to_string(),
-            ApplyEditErrorKind::IoError(err) => err.to_string(),
+            ApplyEditErrorKind::DocumentChanged => write!(f, "document has changed"),
+            ApplyEditErrorKind::FileNotFound => write!(f, "file not found"),
+            ApplyEditErrorKind::UnknownURISchema => write!(f, "URI schema not supported"),
+            ApplyEditErrorKind::IoError(err) => write!(f, "{}", err),
         }
     }
 }
