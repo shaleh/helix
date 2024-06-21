@@ -88,4 +88,5 @@
 | `:move` | Move the current buffer and its corresponding file to a different path |
 | `:echo` | Print the processed input to the editor status |
 | `:yank-diagnostic` | Yank diagnostic(s) under primary cursor to register, or clipboard by default |
+| `:help`, `:h` | Open documentation for a command or keybind. |
 | `:read`, `:r` | Load a file into buffer |
