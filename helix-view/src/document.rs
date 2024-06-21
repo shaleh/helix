@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Error};
+use anyhow::{anyhow, bail, Error};
 use arc_swap::access::DynAccess;
 use arc_swap::ArcSwap;
 use futures_util::future::BoxFuture;
@@ -12,6 +12,7 @@ use helix_core::text_annotations::{InlineAnnotation, Overlay};
 use helix_lsp::util::lsp_pos_to_pos;
 use helix_stdx::faccess::{copy_metadata, readonly};
 use helix_vcs::{DiffHandle, DiffProviderRegistry};
+use thiserror;
 
 use ::parking_lot::Mutex;
 use serde::de::{self, Deserialize, Deserializer};
@@ -21,6 +22,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Weak};
@@ -115,6 +117,14 @@ pub struct SavePoint {
     /// The view this savepoint is associated with
     pub view: ViewId,
     revert: Mutex<Transaction>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DocumentOpenError {
+    #[error("path must be a regular file, simlink, or directory")]
+    IrregularFile,
+    #[error(transparent)]
+    IoError(#[from] io::Error),
 }
 
 pub struct Document {
@@ -380,7 +390,7 @@ fn apply_bom(encoding: &'static encoding::Encoding, buf: &mut [u8; BUF_SIZE]) ->
 pub fn from_reader<R: std::io::Read + ?Sized>(
     reader: &mut R,
     encoding: Option<&'static Encoding>,
-) -> Result<(Rope, &'static Encoding, bool), Error> {
+) -> Result<(Rope, &'static Encoding, bool), io::Error> {
     // These two buffers are 8192 bytes in size each and are used as
     // intermediaries during the decoding process. Text read into `buf`
     // from `reader` is decoded into `buf_out` as UTF-8. Once either
@@ -523,7 +533,7 @@ fn read_and_detect_encoding<R: std::io::Read + ?Sized>(
     reader: &mut R,
     encoding: Option<&'static Encoding>,
     buf: &mut [u8],
-) -> Result<(&'static Encoding, bool, encoding::Decoder, usize), Error> {
+) -> Result<(&'static Encoding, bool, encoding::Decoder, usize), io::Error> {
     let read = reader.read(buf)?;
     let is_empty = read == 0;
     let (encoding, has_bom) = encoding
@@ -624,7 +634,7 @@ where
     *mut_ref = f(mem::take(mut_ref));
 }
 
-use helix_lsp::{lsp, Client, LanguageServerName};
+use helix_lsp::{lsp, Client, LanguageServerId, LanguageServerName};
 use url::Url;
 
 impl Document {
@@ -685,11 +695,18 @@ impl Document {
         encoding: Option<&'static Encoding>,
         config_loader: Option<Arc<ArcSwap<syntax::Loader>>>,
         config: Arc<dyn DynAccess<Config>>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, DocumentOpenError> {
+        // If the path is not a regular file (e.g.: /dev/random) it should not be opened.
+        if path
+            .metadata()
+            .map_or(false, |metadata| !metadata.is_file())
+        {
+            return Err(DocumentOpenError::IrregularFile);
+        }
+
         // Open the file if it exists, otherwise assume it is a new file (and thus empty).
         let (rope, encoding, has_bom) = if path.exists() {
-            let mut file =
-                std::fs::File::open(path).context(format!("unable to open {:?}", path))?;
+            let mut file = std::fs::File::open(path)?;
             from_reader(&mut file, encoding)?
         } else {
             let line_ending: LineEnding = config.load().default_line_ending.into();
@@ -895,7 +912,15 @@ impl Document {
             }
             let write_path = tokio::fs::read_link(&path)
                 .await
-                .unwrap_or_else(|_| path.clone());
+                .ok()
+                .and_then(|p| {
+                    if p.is_relative() {
+                        path.parent().map(|parent| parent.join(p))
+                    } else {
+                        Some(p)
+                    }
+                })
+                .unwrap_or_else(|| path.clone());
 
             if readonly(&write_path) {
                 bail!(std::io::Error::new(
@@ -930,6 +955,7 @@ impl Document {
             let write_result: anyhow::Result<_> = async {
                 let mut dst = tokio::fs::File::create(&write_path).await?;
                 to_writer(&mut dst, encoding_with_bom_info, &text).await?;
+                dst.sync_all().await?;
                 Ok(())
             }
             .await;
@@ -1296,11 +1322,7 @@ impl Document {
             });
 
             self.diagnostics.sort_unstable_by_key(|diagnostic| {
-                (
-                    diagnostic.range,
-                    diagnostic.severity,
-                    diagnostic.language_server_id,
-                )
+                (diagnostic.range, diagnostic.severity, diagnostic.provider)
             });
 
             // Update the inlay hint annotations' positions, helping ensure they are displayed in the proper place
@@ -1644,7 +1666,7 @@ impl Document {
         })
     }
 
-    pub fn supports_language_server(&self, id: usize) -> bool {
+    pub fn supports_language_server(&self, id: LanguageServerId) -> bool {
         self.language_servers().any(|l| l.id() == id)
     }
 
@@ -1767,7 +1789,7 @@ impl Document {
         text: &Rope,
         language_config: Option<&LanguageConfiguration>,
         diagnostic: &helix_lsp::lsp::Diagnostic,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         offset_encoding: helix_lsp::OffsetEncoding,
     ) -> Option<Diagnostic> {
         use helix_core::diagnostic::{Range, Severity::*};
@@ -1844,7 +1866,7 @@ impl Document {
             tags,
             source: diagnostic.source.clone(),
             data: diagnostic.data.clone(),
-            language_server_id,
+            provider: language_server_id,
         })
     }
 
@@ -1857,13 +1879,13 @@ impl Document {
         &mut self,
         diagnostics: impl IntoIterator<Item = Diagnostic>,
         unchanged_sources: &[String],
-        language_server_id: Option<usize>,
+        language_server_id: Option<LanguageServerId>,
     ) {
         if unchanged_sources.is_empty() {
             self.clear_diagnostics(language_server_id);
         } else {
             self.diagnostics.retain(|d| {
-                if language_server_id.map_or(false, |id| id != d.language_server_id) {
+                if language_server_id.map_or(false, |id| id != d.provider) {
                     return true;
                 }
 
@@ -1876,18 +1898,14 @@ impl Document {
         }
         self.diagnostics.extend(diagnostics);
         self.diagnostics.sort_unstable_by_key(|diagnostic| {
-            (
-                diagnostic.range,
-                diagnostic.severity,
-                diagnostic.language_server_id,
-            )
+            (diagnostic.range, diagnostic.severity, diagnostic.provider)
         });
     }
 
     /// clears diagnostics for a given language server id if set, otherwise all diagnostics are cleared
-    pub fn clear_diagnostics(&mut self, language_server_id: Option<usize>) {
+    pub fn clear_diagnostics(&mut self, language_server_id: Option<LanguageServerId>) {
         if let Some(id) = language_server_id {
-            self.diagnostics.retain(|d| d.language_server_id != id);
+            self.diagnostics.retain(|d| d.provider != id);
         } else {
             self.diagnostics.clear();
         }

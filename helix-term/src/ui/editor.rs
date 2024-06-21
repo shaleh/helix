@@ -938,7 +938,11 @@ impl EditorView {
             // If the count is already started and the input is a number, always continue the count.
             (key!(i @ '0'..='9'), Some(count)) => {
                 let i = i.to_digit(10).unwrap() as usize;
-                cxt.editor.count = NonZeroUsize::new(count.get() * 10 + i);
+                let count = count.get() * 10 + i;
+                if count > 100_000_000 {
+                    return;
+                }
+                cxt.editor.count = NonZeroUsize::new(count);
             }
             // A non-zero digit will start the count if that number isn't used by a keymap.
             (key!(i @ '1'..='9'), None) if !self.keymaps.contains_key(mode, event) => {
@@ -1034,7 +1038,6 @@ impl EditorView {
         self.last_insert.1.push(InsertEvent::TriggerCompletion);
 
         // TODO : propagate required size on resize to completion too
-        completion.required_size((size.width, size.height));
         self.completion = Some(completion);
         Some(area)
     }
@@ -1452,7 +1455,7 @@ impl Component for EditorView {
                 EventResult::Consumed(None)
             }
             Event::FocusLost => {
-                if context.editor.config().auto_save {
+                if context.editor.config().auto_save.focus_lost {
                     if let Err(e) = commands::typed::write_all_impl(context, false, false) {
                         context.editor.set_error(format!("{}", e));
                     }
