@@ -26,7 +26,7 @@ use helix_core::{
     history::UndoKind,
     increment, indent,
     indent::IndentStyle,
-    line_ending::{get_line_ending_of_str, line_end_char_index, str_is_line_ending},
+    line_ending::{get_line_ending_of_str, line_end_char_index},
     match_brackets,
     movement::{self, move_vertically_visual, Direction},
     object, pos_at_coords,
@@ -69,6 +69,7 @@ use crate::job::{self, Jobs};
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    error::Error,
     fmt,
     future::Future,
     io::Read,
@@ -141,6 +142,17 @@ impl<'a> Context<'a> {
     #[inline]
     pub fn count(&self) -> usize {
         self.count.map_or(1, |v| v.get())
+    }
+
+    /// Waits on all pending jobs, and then tries to flush all pending write
+    /// operations for all documents.
+    pub fn block_try_flush_writes(&mut self) -> anyhow::Result<()> {
+        compositor::Context {
+            editor: self.editor,
+            jobs: self.jobs,
+            scroll: None,
+        }
+        .block_try_flush_writes()
     }
 }
 
@@ -334,7 +346,7 @@ impl MappableCommand {
         append_mode, "Append after selection",
         command_mode, "Enter command mode",
         file_picker, "Open file picker",
-        file_picker_in_current_buffer_directory, "Open file picker at current buffers's directory",
+        file_picker_in_current_buffer_directory, "Open file picker at current buffer's directory",
         file_picker_in_current_directory, "Open file picker at current working directory",
         code_action, "Perform code action",
         buffer_picker, "Open buffer picker",
@@ -1280,7 +1292,8 @@ fn goto_file_impl(cx: &mut Context, action: Action) {
         }
 
         if let Ok(url) = Url::parse(p) {
-            return open_url(cx, url, action);
+            open_url(cx, url, action);
+            continue;
         }
 
         let path = &rel_path.join(p);
@@ -1633,19 +1646,11 @@ fn replace(cx: &mut Context) {
         if let Some(ch) = ch {
             let transaction = Transaction::change_by_selection(doc.text(), selection, |range| {
                 if !range.is_empty() {
-                    let text: String =
+                    let text: Tendril =
                         RopeGraphemes::new(doc.text().slice(range.from()..range.to()))
-                            .map(|g| {
-                                let cow: Cow<str> = g.into();
-                                if str_is_line_ending(&cow) {
-                                    cow
-                                } else {
-                                    ch.into()
-                                }
-                            })
+                            .map(|_g| ch)
                             .collect();
-
-                    (range.from(), range.to(), Some(text.into()))
+                    (range.from(), range.to(), Some(text))
                 } else {
                     // No change.
                     (range.from(), range.to(), None)
@@ -5449,13 +5454,22 @@ fn select_textobject(cx: &mut Context, objtype: textobject::TextObject) {
                         'e' => textobject_treesitter("entry", range),
                         'p' => textobject::textobject_paragraph(text, range, objtype, count),
                         'm' => textobject::textobject_pair_surround_closest(
-                            text, range, objtype, count,
+                            doc.syntax(),
+                            text,
+                            range,
+                            objtype,
+                            count,
                         ),
                         'g' => textobject_change(range),
                         // TODO: cancel new ranges if inconsistent surround matches across lines
-                        ch if !ch.is_ascii_alphanumeric() => {
-                            textobject::textobject_pair_surround(text, range, objtype, ch, count)
-                        }
+                        ch if !ch.is_ascii_alphanumeric() => textobject::textobject_pair_surround(
+                            doc.syntax(),
+                            text,
+                            range,
+                            objtype,
+                            ch,
+                            count,
+                        ),
                         _ => range,
                     }
                 });
@@ -5480,7 +5494,7 @@ fn select_textobject(cx: &mut Context, objtype: textobject::TextObject) {
         ("c", "Comment (tree-sitter)"),
         ("T", "Test (tree-sitter)"),
         ("e", "Data structure entry (tree-sitter)"),
-        ("m", "Closest surrounding pair"),
+        ("m", "Closest surrounding pair (tree-sitter)"),
         ("g", "Change"),
         (" ", "... or any character acting as a pair"),
     ];
@@ -5494,7 +5508,7 @@ fn surround_add(cx: &mut Context) {
         // surround_len is the number of new characters being added.
         let (open, close, surround_len) = match event.char() {
             Some(ch) => {
-                let (o, c) = surround::get_pair(ch);
+                let (o, c) = match_brackets::get_pair(ch);
                 let mut open = Tendril::new();
                 open.push(o);
                 let mut close = Tendril::new();
@@ -5545,13 +5559,14 @@ fn surround_replace(cx: &mut Context) {
         let text = doc.text().slice(..);
         let selection = doc.selection(view.id);
 
-        let change_pos = match surround::get_surround_pos(text, selection, surround_ch, count) {
-            Ok(c) => c,
-            Err(err) => {
-                cx.editor.set_error(err.to_string());
-                return;
-            }
-        };
+        let change_pos =
+            match surround::get_surround_pos(doc.syntax(), text, selection, surround_ch, count) {
+                Ok(c) => c,
+                Err(err) => {
+                    cx.editor.set_error(err.to_string());
+                    return;
+                }
+            };
 
         let selection = selection.clone();
         let ranges: SmallVec<[Range; 1]> = change_pos.iter().map(|&p| Range::point(p)).collect();
@@ -5566,7 +5581,7 @@ fn surround_replace(cx: &mut Context) {
                 Some(to) => to,
                 None => return doc.set_selection(view.id, selection),
             };
-            let (open, close) = surround::get_pair(to);
+            let (open, close) = match_brackets::get_pair(to);
 
             // the changeset has to be sorted to allow nested surrounds
             let mut sorted_pos: Vec<(usize, char)> = Vec::new();
@@ -5603,13 +5618,14 @@ fn surround_delete(cx: &mut Context) {
         let text = doc.text().slice(..);
         let selection = doc.selection(view.id);
 
-        let mut change_pos = match surround::get_surround_pos(text, selection, surround_ch, count) {
-            Ok(c) => c,
-            Err(err) => {
-                cx.editor.set_error(err.to_string());
-                return;
-            }
-        };
+        let mut change_pos =
+            match surround::get_surround_pos(doc.syntax(), text, selection, surround_ch, count) {
+                Ok(c) => c,
+                Err(err) => {
+                    cx.editor.set_error(err.to_string());
+                    return;
+                }
+            };
         change_pos.sort_unstable(); // the changeset has to be sorted to allow nested surrounds
         let transaction =
             Transaction::change(doc.text(), change_pos.into_iter().map(|p| (p, p + 1, None)));
@@ -5856,7 +5872,10 @@ fn shell_prompt(cx: &mut Context, prompt: Cow<'static, str>, behavior: ShellBeha
 
 fn suspend(_cx: &mut Context) {
     #[cfg(not(windows))]
-    signal_hook::low_level::raise(signal_hook::consts::signal::SIGTSTP).unwrap();
+    {
+        _cx.block_try_flush_writes().ok();
+        signal_hook::low_level::raise(signal_hook::consts::signal::SIGTSTP).unwrap();
+    }
 }
 
 fn add_newline_above(cx: &mut Context) {

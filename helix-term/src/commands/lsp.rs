@@ -21,7 +21,6 @@ use helix_stdx::path;
 use helix_view::{
     document::{DocumentInlayHints, DocumentInlayHintsId},
     editor::Action,
-    graphics::Margin,
     handlers::lsp::SignatureHelpInvoked,
     theme::Style,
     Document, View,
@@ -733,15 +732,7 @@ pub fn code_action(cx: &mut Context) {
             });
             picker.move_down(); // pre-select the first item
 
-            let margin = if editor.menu_border() {
-                Margin::vertical(1)
-            } else {
-                Margin::none()
-            };
-
-            let popup = Popup::new("code-action", picker)
-                .with_scrollbar(false)
-                .margin(margin);
+            let popup = Popup::new("code-action", picker).with_scrollbar(false);
 
             compositor.replace_or_push("code-action", popup);
         };
@@ -1038,11 +1029,12 @@ pub fn rename_symbol(cx: &mut Context) {
     fn create_rename_prompt(
         editor: &Editor,
         prefill: String,
+        history_register: Option<char>,
         language_server_id: Option<LanguageServerId>,
     ) -> Box<ui::Prompt> {
         let prompt = ui::Prompt::new(
             "rename-to:".into(),
-            None,
+            history_register,
             ui::completers::none,
             move |cx: &mut compositor::Context, input: &str, event: PromptEvent| {
                 if event != PromptEvent::Validate {
@@ -1079,6 +1071,7 @@ pub fn rename_symbol(cx: &mut Context) {
     }
 
     let (view, doc) = current_ref!(cx.editor);
+    let history_register = cx.register;
 
     if doc
         .language_servers_with_feature(LanguageServerFeature::RenameSymbol)
@@ -1121,14 +1114,14 @@ pub fn rename_symbol(cx: &mut Context) {
                     }
                 };
 
-                let prompt = create_rename_prompt(editor, prefill, Some(ls_id));
+                let prompt = create_rename_prompt(editor, prefill, history_register, Some(ls_id));
 
                 compositor.push(prompt);
             },
         );
     } else {
         let prefill = get_prefill_from_word_boundary(cx.editor);
-        let prompt = create_rename_prompt(cx.editor, prefill, None);
+        let prompt = create_rename_prompt(cx.editor, prefill, history_register, None);
         cx.push_layer(prompt);
     }
 }
