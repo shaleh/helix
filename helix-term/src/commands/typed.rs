@@ -2401,7 +2401,6 @@ fn reflow(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
         .unwrap_or_else(|| doc.text_width());
 
     let rope = doc.text();
-    let slice = rope.slice(..);
     let opts = ReflowOpts {
         width: text_width,
         line_ending: doc.line_ending,
@@ -2414,7 +2413,7 @@ fn reflow(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
     let mut changes = Vec::new();
     for selection in doc.selection(view.id) {
         changes.append(&mut helix_core::doc_formatter::reflow(
-            slice.slice(..selection.to()),
+            rope.slice(..selection.to()),
             selection.from(),
             &opts,
         ));
