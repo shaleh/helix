@@ -192,7 +192,7 @@ pub struct Document {
     pub(crate) modified_since_accessed: bool,
 
     pub(crate) diagnostics: Vec<Diagnostic>,
-    pub(crate) language_servers: HashMap<LanguageServerName, Arc<Client>>,
+    pub(crate) language_servers: Vec<(LanguageServerName, Arc<Client>)>,
 
     diff_handle: Option<DiffHandle>,
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
@@ -710,7 +710,7 @@ impl Document {
             last_saved_time: SystemTime::now(),
             last_saved_revision: 0,
             modified_since_accessed: false,
-            language_servers: HashMap::new(),
+            language_servers: Vec::new(),
             diff_handle: None,
             config,
             version_control_head: None,
@@ -1786,38 +1786,35 @@ impl Document {
 
     /// maintains the order as configured in the language_servers TOML array
     pub fn language_servers(&self) -> impl Iterator<Item = &helix_lsp::Client> {
-        self.language_config().into_iter().flat_map(move |config| {
-            config.language_servers.iter().filter_map(move |features| {
-                let ls = &**self.language_servers.get(&features.name)?;
-                if ls.is_initialized() {
-                    Some(ls)
-                } else {
-                    None
-                }
-            })
+        self.language_servers.iter().filter_map(|(_, ls)| {
+            if ls.is_initialized() {
+                Some(ls.as_ref())
+            } else {
+                None
+            }
         })
     }
 
     pub fn remove_language_server_by_name(&mut self, name: &str) -> Option<Arc<Client>> {
-        self.language_servers.remove(name)
+        for (idx, elem) in self.language_servers.iter().enumerate() {
+            if elem.0 == name {
+                let item = self.language_servers.remove(idx);
+                return Some(item.1);
+            }
+        }
+        None
     }
 
     pub fn language_servers_with_feature(
         &self,
         feature: LanguageServerFeature,
     ) -> impl Iterator<Item = &helix_lsp::Client> {
-        self.language_config().into_iter().flat_map(move |config| {
-            config.language_servers.iter().filter_map(move |features| {
-                let ls = &**self.language_servers.get(&features.name)?;
-                if ls.is_initialized()
-                    && ls.supports_feature(feature)
-                    && features.has_feature(feature)
-                {
-                    Some(ls)
-                } else {
-                    None
-                }
-            })
+        self.language_servers.iter().filter_map(move |(_, ls)| {
+            if ls.is_initialized() && ls.supports_feature(feature) {
+                Some(ls.as_ref())
+            } else {
+                None
+            }
         })
     }
 
