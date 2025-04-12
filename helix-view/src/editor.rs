@@ -1539,12 +1539,13 @@ impl Editor {
                     None
                 }
             };
-        let mut language_servers = lang.as_ref().map_or_else(HashMap::default, |language| {
-            self.language_servers
-                .get(language, path.as_ref(), root_dirs, config.lsp.snippets)
-                .filter_map(|(lang, client)| resolve_client_lookup(language, lang, client))
-                .collect::<HashMap<_, _>>()
-        });
+        let mut language_servers: Vec<(_, _)> =
+            lang.as_ref().map_or_else(Vec::default, |language| {
+                self.language_servers
+                    .get(language, path.as_ref(), root_dirs, config.lsp.snippets)
+                    .filter_map(|(lang, client)| resolve_client_lookup(language, lang, client))
+                    .collect()
+            });
         let syn_loader = (*self.syn_loader).load();
         if let Some(language) = syn_loader.language_for_name(RopeSlice::from("__common__")) {
             let data = syn_loader.language(language);
@@ -1572,9 +1573,9 @@ impl Editor {
         // only spawn new language servers if the servers aren't the same
         let doc_language_servers_not_in_registry =
             doc.language_servers.iter().filter(|(name, doc_ls)| {
-                language_servers
-                    .get(*name)
-                    .map_or(true, |ls| ls.id() != doc_ls.id())
+                !language_servers
+                    .iter()
+                    .any(|(n, ls)| n == name && ls.id() == doc_ls.id())
             });
 
         for (_, language_server) in doc_language_servers_not_in_registry {
@@ -1582,9 +1583,9 @@ impl Editor {
         }
 
         let language_servers_not_in_doc = language_servers.iter().filter(|(name, ls)| {
-            doc.language_servers
-                .get(*name)
-                .map_or(true, |doc_ls| ls.id() != doc_ls.id())
+            !doc.language_servers
+                .iter()
+                .any(|(n, doc_ls)| n == name && ls.id() == doc_ls.id())
         });
 
         for (_, language_server) in language_servers_not_in_doc {
@@ -2072,7 +2073,7 @@ impl Editor {
     }
 
     /// Returns all supported diagnostics for the document
-    /// filtered by `filter` which is invocated with the raw `lsp::Diagnostic` and the language server id it came from
+    /// filtered by `filter` which is invoked with the raw `lsp::Diagnostic` and the language server id it came from
     pub fn doc_diagnostics_with_filter<'a>(
         language_servers: &'a helix_lsp::Registry,
         diagnostics: &'a Diagnostics,
