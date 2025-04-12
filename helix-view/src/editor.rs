@@ -46,8 +46,11 @@ pub use helix_core::diagnostic::Severity;
 use helix_core::{
     auto_pairs::AutoPairs,
     diagnostic::DiagnosticProvider,
-    syntax::{self, AutoPairConfig, IndentationHeuristic, LanguageServerFeature, SoftWrap},
-    Change, LineEnding, Position, Range, Selection, Uri, NATIVE_LINE_ENDING,
+    syntax::{
+        self, AutoPairConfig, IndentationHeuristic, LanguageConfiguration, LanguageServerFeature,
+        SoftWrap,
+    },
+    Change, LineEnding, Position, Range, RopeSlice, Selection, Uri, NATIVE_LINE_ENDING,
 };
 use helix_dap as dap;
 use helix_lsp::lsp;
@@ -1503,31 +1506,50 @@ impl Editor {
         let config = doc.config.load();
         let root_dirs = &config.workspace_lsp_roots;
 
-        // store only successfully started language servers
-        let language_servers = lang.as_ref().map_or_else(HashMap::default, |language| {
+        let resolve_client_lookup =
+            |language: &Arc<LanguageConfiguration>, lang, client| match client {
+                Ok(client) => Some((lang, client)),
+                Err(err) => {
+                    if let helix_lsp::Error::ExecutableNotFound(err) = err {
+                        // Not really an error because some language servers might not be installed
+                        log::debug!(
+                            "Language server not found for `{}` {} {}",
+                            language.scope(),
+                            lang,
+                            err,
+                        );
+                    } else {
+                        log::error!(
+                            "Failed to initialize the language servers for `{}` - `{}` {{ {} }}",
+                            language.scope(),
+                            lang,
+                            err
+                        );
+                    }
+                    None
+                }
+            };
+        let mut language_servers = lang.as_ref().map_or_else(HashMap::default, |language| {
             self.language_servers
                 .get(language, path.as_ref(), root_dirs, config.lsp.snippets)
-                .filter_map(|(lang, client)| match client {
-                    Ok(client) => Some((lang, client)),
-                    Err(err) => {
-                        if let helix_lsp::Error::ExecutableNotFound(err) = err {
-                            // Silence by default since some language servers might just not be installed
-                            log::debug!(
-                                "Language server not found for `{}` {} {}", language.scope(), lang, err,
-                            );
-                        } else {
-                            log::error!(
-                                "Failed to initialize the language servers for `{}` - `{}` {{ {} }}",
-                                language.scope(),
-                                lang,
-                                err
-                            );
-                        }
-                        None
-                    }
-                })
+                .filter_map(|(lang, client)| resolve_client_lookup(language, lang, client))
                 .collect::<HashMap<_, _>>()
         });
+        if let Some(language) = (*self.syn_loader)
+            .load()
+            .language_config_for_name(RopeSlice::from("__common__"))
+        {
+            language_servers.extend(
+                self.language_servers
+                    .get(
+                        language.as_ref(),
+                        path.as_ref(),
+                        root_dirs,
+                        config.lsp.snippets,
+                    )
+                    .filter_map(|(lang, client)| resolve_client_lookup(&language, lang, client)),
+            );
+        }
 
         if language_servers.is_empty() && doc.language_servers.is_empty() {
             return;
