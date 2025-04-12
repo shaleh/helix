@@ -911,7 +911,6 @@ pub struct Loader {
     language_config_ids_by_extension: HashMap<String, usize>, // Vec<usize>
     language_config_ids_glob_matcher: FileTypeGlobMatcher,
     language_config_ids_by_shebang: HashMap<String, usize>,
-    global_language_servers: Vec<String>,
 
     language_server_configs: HashMap<String, LanguageServerConfiguration>,
 
@@ -955,7 +954,6 @@ impl Loader {
             language_config_ids_glob_matcher: FileTypeGlobMatcher::new(file_type_globs)?,
             language_config_ids_by_shebang,
             language_server_configs: config.language_server,
-            global_language_servers: Vec::new(),
             scopes: ArcSwap::from_pointee(Vec::new()),
         })
     }
@@ -1062,10 +1060,6 @@ impl Loader {
 
     pub fn language_server_configs(&self) -> &HashMap<String, LanguageServerConfiguration> {
         &self.language_server_configs
-    }
-
-    pub fn global_language_servers(&self) -> impl Iterator<Item = &String> {
-        self.global_language_servers.iter()
     }
 
     pub fn set_scopes(&self, scopes: Vec<String>) {
