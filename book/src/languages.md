@@ -202,6 +202,19 @@ The list of supported features is:
 - `rename-symbol`
 - `inlay-hints`
 
+## Defining common language servers
+
+It is also possible to define the special language name "__common__". The sole purpose of this language is to define
+language servers that will be applied to all files. Below is an example which adds a spell checker ("ltex-ls"), snippet support ("scls"), and a tool to help resolve merges ("merge-assistant").
+
+```toml
+[[language]]
+name = "__common__"
+scope = "source.__common__"
+file-types = []
+language-servers = [ "ltex-ls", "scls", "merge-assistant" ]
+```
+
 ## Tree-sitter grammar configuration
 
 The source for a language's tree-sitter grammar is specified in a `[[grammar]]`
