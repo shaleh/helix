@@ -46,10 +46,7 @@ pub use helix_core::diagnostic::Severity;
 use helix_core::{
     auto_pairs::AutoPairs,
     diagnostic::DiagnosticProvider,
-    syntax::{
-        self, AutoPairConfig, IndentationHeuristic, LanguageConfiguration, LanguageServerFeature,
-        SoftWrap,
-    },
+    syntax::{self, AutoPairConfig, IndentationHeuristic, LanguageConfiguration, SoftWrap},
     Change, LineEnding, Position, Range, RopeSlice, Selection, Uri, NATIVE_LINE_ENDING,
 };
 use helix_dap as dap;
@@ -2067,27 +2064,19 @@ impl Editor {
                 diags.iter().filter_map(move |(diagnostic, provider)| {
                     let server_id = provider.language_server_id()?;
                     let ls = language_servers.get_by_id(server_id)?;
-                    language_config
-                        .as_ref()
-                        .and_then(|c| {
-                            c.language_servers.iter().find(|features| {
-                                features.name == ls.name()
-                                    && features.has_feature(LanguageServerFeature::Diagnostics)
-                            })
-                        })
-                        .and_then(|_| {
-                            if filter(diagnostic, provider) {
-                                Document::lsp_diagnostic_to_diagnostic(
-                                    &text,
-                                    language_config.as_deref(),
-                                    diagnostic,
-                                    provider.clone(),
-                                    ls.offset_encoding(),
-                                )
-                            } else {
-                                None
-                            }
-                        })
+                    language_config.as_ref().and_then(|_| {
+                        if filter(diagnostic, provider) {
+                            Document::lsp_diagnostic_to_diagnostic(
+                                &text,
+                                language_config.as_deref(),
+                                diagnostic,
+                                provider.clone(),
+                                ls.offset_encoding(),
+                            )
+                        } else {
+                            None
+                        }
+                    })
                 })
             })
             .into_iter()
