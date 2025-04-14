@@ -7,6 +7,7 @@ use serde::{ser::SerializeSeq as _, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
+    num::NonZeroU8,
     path::PathBuf,
     str::FromStr,
 };
@@ -60,6 +61,10 @@ pub struct LanguageConfiguration {
 
     /// If set, overrides `editor.path-completion`.
     pub path_completion: Option<bool>,
+    /// If set, overrides `editor.word-completion`.
+    pub word_completion: Option<bool>,
+    /// If set, overrides `editor.word-completion-trigger-length`.
+    pub word_completion_trigger_length: Option<NonZeroU8>,
 
     #[serde(default)]
     pub diagnostic_severity: Severity,
