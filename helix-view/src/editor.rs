@@ -48,7 +48,10 @@ use helix_core::{
     diagnostic::DiagnosticProvider,
     syntax::{
         self,
-        config::{AutoPairConfig, IndentationHeuristic, LanguageServerFeature, SoftWrap},
+        config::{
+            AutoPairConfig, IndentationHeuristic, LanguageConfiguration, LanguageServerFeature,
+            SoftWrap,
+        },
     },
     Change, LineEnding, Position, Range, Selection, Uri, NATIVE_LINE_ENDING,
 };
@@ -1506,31 +1509,48 @@ impl Editor {
         let config = doc.config.load();
         let root_dirs = &config.workspace_lsp_roots;
 
+        let resolve_client_lookup =
+            |language: &Arc<LanguageConfiguration>, lang, client| match client {
+                Ok(client) => Some((lang, client)),
+                Err(err) => {
+                    if let helix_lsp::Error::ExecutableNotFound(err) = err {
+                        // Silence by default since some language servers might just not be installed
+                        log::debug!(
+                            "Language server not found for `{}` {:?} {}",
+                            language.scope,
+                            language,
+                            err,
+                        );
+                    } else {
+                        log::error!(
+                            "Failed to initialize the language servers for `{}` - `{:?}` {{ {} }}",
+                            language.scope,
+                            language,
+                            err
+                        );
+                    }
+                    None
+                }
+            };
         // store only successfully started language servers
-        let language_servers = lang.as_ref().map_or_else(HashMap::default, |language| {
+        let mut language_servers = lang.as_ref().map_or_else(HashMap::default, |language| {
             self.language_servers
                 .get(language, path.as_ref(), root_dirs, config.lsp.snippets)
-                .filter_map(|(lang, client)| match client {
-                    Ok(client) => Some((lang, client)),
-                    Err(err) => {
-                        if let helix_lsp::Error::ExecutableNotFound(err) = err {
-                            // Silence by default since some language servers might just not be installed
-                            log::debug!(
-                                "Language server not found for `{}` {} {}", language.scope, lang, err,
-                            );
-                        } else {
-                            log::error!(
-                                "Failed to initialize the language servers for `{}` - `{}` {{ {} }}",
-                                language.scope,
-                                lang,
-                                err
-                            );
-                        }
-                        None
-                    }
-                })
+                .filter_map(|(lang, client)| resolve_client_lookup(language, lang, client))
                 .collect::<HashMap<_, _>>()
         });
+        let syn_loader = (*self.syn_loader).load();
+        if let Some(language) = syn_loader.language_for_name("__common__") {
+            let lang_data = syn_loader.language(language);
+            let lang_config = lang_data.config();
+            language_servers.extend(
+                self.language_servers
+                    .get(lang_config, path.as_ref(), root_dirs, config.lsp.snippets)
+                    .filter_map(|(lang, client)| resolve_client_lookup(lang_config, lang, client)),
+            );
+        }
+
+        log::info!("Loaded language_servers {:?}", language_servers);
 
         if language_servers.is_empty() && doc.language_servers.is_empty() {
             return;
@@ -1547,6 +1567,7 @@ impl Editor {
             });
 
         for (_, language_server) in doc_language_servers_not_in_registry {
+            log::info!("not in registry {:?}", language_server);
             language_server.text_document_did_close(doc.identifier());
         }
 
@@ -1557,6 +1578,7 @@ impl Editor {
         });
 
         for (_, language_server) in language_servers_not_in_doc {
+            log::info!("not in doc{:?}", language_server);
             // TODO: this now races with on_init code if the init happens too quickly
             language_server.text_document_did_open(
                 doc_url.clone(),
@@ -2048,8 +2070,11 @@ impl Editor {
         document: &Document,
         filter: impl Fn(&lsp::Diagnostic, &DiagnosticProvider) -> bool + 'a,
     ) -> impl Iterator<Item = helix_core::Diagnostic> + 'a {
+        log::error!("Diagnostics incoming: {:?}", diagnostics);
         let text = document.text().clone();
         let language_config = document.language.clone();
+        // Need to clone the clients to avoid adding a lifetime marker to `Document`.
+        let doc_language_servers: Vec<_> = document.language_servers.values().cloned().collect();
         document
             .uri()
             .and_then(|uri| diagnostics.get(&uri))
@@ -2057,27 +2082,19 @@ impl Editor {
                 diags.iter().filter_map(move |(diagnostic, provider)| {
                     let server_id = provider.language_server_id()?;
                     let ls = language_servers.get_by_id(server_id)?;
-                    language_config
-                        .as_ref()
-                        .and_then(|c| {
-                            c.language_servers.iter().find(|features| {
-                                features.name == ls.name()
-                                    && features.has_feature(LanguageServerFeature::Diagnostics)
-                            })
-                        })
-                        .and_then(|_| {
-                            if filter(diagnostic, provider) {
-                                Document::lsp_diagnostic_to_diagnostic(
-                                    &text,
-                                    language_config.as_deref(),
-                                    diagnostic,
-                                    provider.clone(),
-                                    ls.offset_encoding(),
-                                )
-                            } else {
-                                None
-                            }
-                        })
+                    language_config.as_ref().and_then(|_| {
+                        if filter(diagnostic, provider) {
+                            Document::lsp_diagnostic_to_diagnostic(
+                                &text,
+                                language_config.as_deref(),
+                                diagnostic,
+                                provider.clone(),
+                                ls.offset_encoding(),
+                            )
+                        } else {
+                            None
+                        }
+                    })
                 })
             })
             .into_iter()

@@ -1853,7 +1853,11 @@ impl Document {
     }
 
     pub fn supports_language_server(&self, id: LanguageServerId) -> bool {
-        self.language_servers().any(|l| l.id() == id)
+        self.language_servers()
+            .inspect(|ls| {
+                log::info!("ls match? id: {:?} {:?}", ls, id);
+            })
+            .any(|l| l.id() == id)
     }
 
     pub fn diff_handle(&self) -> Option<&DiffHandle> {
@@ -2058,6 +2062,7 @@ impl Document {
         if let Some(lang_conf) = language_config {
             if let Some(severity) = severity {
                 if severity < lang_conf.diagnostic_severity {
+                    log::debug!("Diagnostic did not pass severity check");
                     return None;
                 }
             }
@@ -2091,6 +2096,7 @@ impl Document {
             start != end && end != 0 && text.get_char(end - 1).is_some_and(char_is_word);
         let starts_at_word = start != end && text.get_char(start).is_some_and(char_is_word);
 
+        log::debug!("Diagnostic accepted");
         Some(Diagnostic {
             range: Range { start, end },
             ends_at_word,

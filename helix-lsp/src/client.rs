@@ -464,7 +464,7 @@ impl Client {
         R::Params: serde::Serialize,
     {
         let server_tx = self.server_tx.clone();
-
+        log::info!("server tx: {:?}", server_tx);
         let params = match serde_json::to_value(params) {
             Ok(params) => params,
             Err(err) => {
@@ -476,6 +476,7 @@ impl Client {
                 return;
             }
         };
+        log::info!("server params: {:?}", params);
 
         let notification = jsonrpc::Notification {
             jsonrpc: Some(jsonrpc::Version::V2),
@@ -799,6 +800,7 @@ impl Client {
         doc: &Rope,
         language_id: String,
     ) {
+        log::info!("did open {}, {}", version, language_id);
         self.notify::<lsp::notification::DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
             text_document: lsp::TextDocumentItem {
                 uri,
