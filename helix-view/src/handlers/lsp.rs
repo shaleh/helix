@@ -401,13 +401,14 @@ impl Editor {
 
 pub fn register_hooks(_handlers: &Handlers) {
     register_hook!(move |event: &mut LanguageServerInitialized<'_>| {
+        log::info!("inside server initialized: {:?}", event.server_id);
         let language_server = event.editor.language_server_by_id(event.server_id).unwrap();
 
-        for doc in event
-            .editor
-            .documents()
-            .filter(|doc| doc.supports_language_server(event.server_id))
-        {
+        for doc in event.editor.documents().filter(|doc| {
+            let result = doc.supports_language_server(event.server_id);
+            log::info!("does doc support language server? {:?} {}", doc, result);
+            result
+        }) {
             let Some(url) = doc.url() else {
                 continue;
             };
