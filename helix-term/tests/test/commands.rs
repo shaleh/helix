@@ -1034,6 +1034,20 @@ selected
     ))
     .await?;
 
+    test((
+        "#[|  TestWrappingLongWordWithIndent]#",
+        ":reflow 2<ret>",
+        "#[|  TestWrappingLongWordWithIndent]#",
+    ))
+    .await?;
+
+    test((
+        "#[| TestWrappingLongWordWithWordBoundaryAtTheStartOfTheDocument]#",
+        ":reflow 2<ret>",
+        "#[| TestWrappingLongWordWithWordBoundaryAtTheStartOfTheDocument]#",
+    ))
+    .await?;
+
     Ok(())
 }
 
