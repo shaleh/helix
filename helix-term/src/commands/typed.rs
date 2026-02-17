@@ -2749,14 +2749,11 @@ fn noop(_cx: &mut compositor::Context, _args: Args, _event: PromptEvent) -> anyh
 // My local functions are here. Eventually replaced with some kind of external script or plugin support.
 // All are prefixed with "my_" to help prevent overlap.
 
-fn my_ghn(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+fn my_ghv(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
     }
 
-    let Some(repo_name) = args.first() else {
-        return Err(anyhow::anyhow!("Error: expected a repo name"));
-    };
     let (view, doc) = current_ref!(cx.editor);
     let text = doc.text().slice(..);
     // Always pass the absolute path. We don't know where the editor was opened.
@@ -2765,12 +2762,7 @@ fn my_ghn(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
     };
     let cursor_line = doc.selection(view.id).primary().cursor_line(text);
     let line_number = (cursor_line + 1).to_string();
-    let cmd = [
-        "ghn",
-        repo_name,
-        filename.to_str().unwrap_or_default(),
-        &line_number,
-    ];
+    let cmd = ["ghv", filename.to_str().unwrap_or_default(), &line_number];
     shell(cx, &cmd.join(" "), &ShellBehavior::Ignore);
     Ok(())
 }
@@ -3849,13 +3841,13 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         },
     },
     TypableCommand {
-        name: "ghn",
+        name: "ghv",
         aliases: &[],
-        doc: "Loads Github Newsela repo at the current buffers file and line.",
-        fun: my_ghn,
+        doc: "Loads Github repo at the current buffers file and line.",
+        fun: my_ghv,
         completer: CommandCompleter::none(),
         signature: Signature {
-            positionals: (1, Some(1)),
+            positionals: (0, None),
             ..Signature::DEFAULT
         },
     },
