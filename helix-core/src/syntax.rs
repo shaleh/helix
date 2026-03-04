@@ -285,6 +285,7 @@ pub type LoaderError = globset::Error;
 
 impl Loader {
     pub fn new(config: Configuration) -> Result<Self, LoaderError> {
+        let config = config.resolve_global_language_servers();
         let mut languages = Vec::with_capacity(config.language.len());
         let mut languages_by_extension = HashMap::new();
         let mut languages_by_shebang = HashMap::new();
