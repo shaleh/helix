@@ -65,7 +65,7 @@ These configuration keys are available:
 | `block-comment-tokens`| The start and end tokens for a multiline comment either an array or single table of `{ start = "/*", end = "*/"}`. The first set of tokens will be used for commenting, any pairs in the array can be uncommented |
 | `indent`              | The indent to use. Has sub keys `unit` (the text inserted into the document when indenting; usually set to N spaces or `"\t"` for tabs) and `tab-width` (the number of spaces rendered for a tab) |
 | `language-servers`    | The Language Servers used for this language. See below for more information in the section [Configuring Language Servers for a language](#configuring-language-servers-for-a-language)   |
-| `global-language-servers` | Whether global language servers (from the `[global]` section) are appended to this language. Defaults to `true`. Set to `false` to opt out. |
+| `inherit-global-language-servers` | Whether global language servers (from the `[global]` section) are appended to this language. Defaults to `true`. Set to `false` to opt out. |
 | `grammar`             | The tree-sitter grammar to use (defaults to the value of `name`) |
 | `formatter`           | The formatter for the language, it will take precedence over the lsp when defined. The formatter must be able to take the original file as input from stdin and write the formatted file to stdout. The filename of the current buffer can be passed as argument by using the `%{buffer_name}` expansion variable. See below for more information in the [Configuring the formatter command](#configuring-the-formatter-command) |
 | `soft-wrap`           | [editor.softwrap](./editor.md#editorsoft-wrap-section)
@@ -255,12 +255,12 @@ language-servers = [
 ```
 
 To exclude a language from receiving global servers entirely, set
-`global-language-servers = false`:
+`inherit-global-language-servers = false`:
 
 ```toml
 [[language]]
 name = "plaintext"
-global-language-servers = false
+inherit-global-language-servers = false
 ```
 
 ## Tree-sitter grammar configuration
