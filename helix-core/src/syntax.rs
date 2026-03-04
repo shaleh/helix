@@ -285,7 +285,7 @@ pub type LoaderError = globset::Error;
 
 impl Loader {
     pub fn new(config: Configuration) -> Result<Self, LoaderError> {
-        let language_configs = config::resolve_global_language_servers(
+        let language_configs = config::resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
