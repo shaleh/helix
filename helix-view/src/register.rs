@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, iter};
+use std::{borrow::Cow, collections::HashMap, collections::VecDeque, iter, sync::Arc};
 
 use anyhow::Result;
 use arc_swap::access::DynAccess;
@@ -27,14 +27,21 @@ pub struct Registers {
     /// The order is reversed again in `Registers::read`. This allows us to
     /// efficiently prepend new values in `Registers::push`.
     inner: HashMap<char, Vec<String>>,
+    /// Per-register history of past writes. Each entry is the set of selection
+    /// values from one write operation, stored front = most recent. Bounded to
+    /// [`MAX_HISTORY_ENTRIES`] per register.
+    history: HashMap<char, VecDeque<Arc<[String]>>>,
     clipboard_provider: Box<dyn DynAccess<ClipboardProvider>>,
     pub last_search_register: char,
 }
+
+const MAX_HISTORY_ENTRIES: usize = 10;
 
 impl Registers {
     pub fn new(clipboard_provider: Box<dyn DynAccess<ClipboardProvider>>) -> Self {
         Self {
             inner: Default::default(),
+            history: Default::default(),
             clipboard_provider,
             last_search_register: '/',
         }
@@ -95,6 +102,7 @@ impl Registers {
                 Ok(())
             }
             _ => {
+                self.record_history(name, values.clone());
                 values.reverse();
                 self.inner.insert(name, values);
                 Ok(())
@@ -149,6 +157,10 @@ impl Registers {
             .and_then(|mut values| values.next_back())
     }
 
+    pub fn read_history(&self, name: char) -> Option<&VecDeque<Arc<[String]>>> {
+        self.history.get(&name).filter(|deque| !deque.is_empty())
+    }
+
     pub fn iter_preview(&self) -> impl Iterator<Item = (char, &str)> {
         self.inner
             .iter()
@@ -195,6 +207,20 @@ impl Registers {
             }
             '_' | '#' | '.' | '%' => false,
             _ => self.inner.remove(&name).is_some(),
+        }
+    }
+
+    fn record_history(&mut self, name: char, values: Vec<String>) {
+        let deque = self
+            .history
+            .entry(name)
+            .or_insert_with(|| VecDeque::with_capacity(MAX_HISTORY_ENTRIES));
+        if deque.front().is_some_and(|front| front.as_ref() == values) {
+            return;
+        }
+        deque.push_front(values.into());
+        if deque.len() > MAX_HISTORY_ENTRIES {
+            deque.pop_back();
         }
     }
 
@@ -333,3 +359,149 @@ impl ExactSizeIterator for RegisterValues<'_> {
 trait DoubleEndedExactSizeIterator: DoubleEndedIterator + ExactSizeIterator {}
 
 impl<I: DoubleEndedIterator + ExactSizeIterator> DoubleEndedExactSizeIterator for I {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn test_registers() -> Registers {
+        let provider = Arc::new(arc_swap::ArcSwap::new(Arc::new(
+            ClipboardProvider::None,
+        )));
+        Registers::new(Box::new(provider))
+    }
+
+    // US1: Yanking 5 pieces of text shows items 0-4, most recent first.
+    #[test]
+    fn successive_yanks_appear_most_recent_first() {
+        let mut regs = test_registers();
+        for i in 0..5 {
+            regs.write('"', vec![format!("yank{i}")]).unwrap();
+        }
+
+        let history = regs.read_history('"').unwrap();
+        assert_eq!(history.len(), 5);
+        assert_eq!(history[0], vec!["yank4".to_string()]); // most recent
+        assert_eq!(history[4], vec!["yank0".to_string()]); // oldest
+    }
+
+    // US1: Multi-line yanks are preserved as a single history entry.
+    #[test]
+    fn multiline_yank_preserved_in_history() {
+        let mut regs = test_registers();
+        let function_body = "fn hello() {\n    println!(\"hello\");\n}".to_string();
+        regs.write('"', vec![function_body.clone()]).unwrap();
+        regs.write('"', vec!["short".into()]).unwrap();
+
+        let history = regs.read_history('"').unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0], vec!["short".to_string()]);
+        assert_eq!(history[1], vec![function_body]);
+    }
+
+    // US1: Multi-selection yanks store all selections as one entry.
+    #[test]
+    fn multi_selection_yank_preserved_in_history() {
+        let mut regs = test_registers();
+        regs.write(
+            '"',
+            vec!["sel1".into(), "sel2".into(), "sel3".into()],
+        )
+        .unwrap();
+
+        let history = regs.read_history('"').unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0],
+            vec!["sel1".to_string(), "sel2".to_string(), "sel3".to_string()]
+        );
+    }
+
+    // US2: Named registers maintain independent histories.
+    #[test]
+    fn named_registers_have_independent_history() {
+        let mut regs = test_registers();
+        regs.write('a', vec!["a1".into()]).unwrap();
+        regs.write('a', vec!["a2".into()]).unwrap();
+        regs.write('a', vec!["a3".into()]).unwrap();
+        regs.write('b', vec!["b1".into()]).unwrap();
+        regs.write('"', vec!["default1".into()]).unwrap();
+
+        assert_eq!(regs.read_history('a').unwrap().len(), 3);
+        assert_eq!(regs.read_history('b').unwrap().len(), 1);
+        assert_eq!(regs.read_history('"').unwrap().len(), 1);
+        // Register a shows only its own entries.
+        assert_eq!(regs.read_history('a').unwrap()[0], vec!["a3".to_string()]);
+        assert_eq!(regs.read_history('a').unwrap()[2], vec!["a1".to_string()]);
+    }
+
+    // US2: Yanking 12 items keeps only the 10 most recent.
+    #[test]
+    fn history_bounded_to_ten_oldest_discarded() {
+        let mut regs = test_registers();
+        for i in 0..12 {
+            regs.write('"', vec![format!("yank{i}")]).unwrap();
+        }
+
+        let history = regs.read_history('"').unwrap();
+        assert_eq!(history.len(), MAX_HISTORY_ENTRIES);
+        assert_eq!(history[0], vec!["yank11".to_string()]); // most recent
+        assert_eq!(
+            history[MAX_HISTORY_ENTRIES - 1],
+            vec!["yank2".to_string()] // oldest kept
+        );
+    }
+
+    // Edge: Register with no yanks returns None.
+    #[test]
+    fn no_history_for_unused_register() {
+        let regs = test_registers();
+        assert!(regs.read_history('"').is_none());
+        assert!(regs.read_history('z').is_none());
+    }
+
+    // Edge: Blackhole and read-only registers never have history.
+    #[test]
+    fn excluded_registers_have_no_history() {
+        let mut regs = test_registers();
+        regs.write('_', vec!["ignored".into()]).unwrap();
+        assert!(regs.read_history('_').is_none());
+
+        assert!(regs.write('#', vec!["fail".into()]).is_err());
+        assert!(regs.write('.', vec!["fail".into()]).is_err());
+        assert!(regs.write('%', vec!["fail".into()]).is_err());
+    }
+
+    // Edge: Push (appending a selection) does not create a history entry.
+    // Only distinct write operations (yanks, deletes, changes) appear.
+    #[test]
+    fn push_does_not_record_history() {
+        let mut regs = test_registers();
+        regs.write('a', vec!["initial".into()]).unwrap();
+        regs.push('a', "appended".into()).unwrap();
+
+        let history = regs.read_history('a').unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0], vec!["initial".to_string()]);
+    }
+
+    // Edge: Yanking the same content consecutively does not create duplicates.
+    #[test]
+    fn duplicate_consecutive_yanks_deduplicated() {
+        let mut regs = test_registers();
+        regs.write('"', vec!["same".into()]).unwrap();
+        regs.write('"', vec!["same".into()]).unwrap();
+        regs.write('"', vec!["same".into()]).unwrap();
+
+        let history = regs.read_history('"').unwrap();
+        assert_eq!(history.len(), 1);
+
+        // Different content after duplicates still records.
+        regs.write('"', vec!["different".into()]).unwrap();
+        let history = regs.read_history('"').unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0], vec!["different".to_string()]);
+        assert_eq!(history[1], vec!["same".to_string()]);
+    }
+}

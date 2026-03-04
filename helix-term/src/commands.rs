@@ -74,6 +74,7 @@ use std::{
     char::{ToLowercase, ToUppercase},
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    sync::Arc,
     error::Error,
     fmt,
     future::Future,
@@ -501,6 +502,8 @@ impl MappableCommand {
         replace_selections_with_primary_clipboard, "Replace selections by primary clipboard",
         paste_after, "Paste after selection",
         paste_before, "Paste before selection",
+        yank_history_paste_after, "Paste from yank history after selection",
+        yank_history_paste_before, "Paste from yank history before selection",
         paste_clipboard_after, "Paste clipboard after selections",
         paste_clipboard_before, "Paste clipboard before selections",
         paste_primary_clipboard_after, "Paste primary clipboard after selections",
@@ -4930,6 +4933,65 @@ fn paste_before(cx: &mut Context) {
         cx.count(),
     );
     exit_select_mode(cx);
+}
+
+fn yank_history_paste(cx: &mut Context, paste_direction: Paste) {
+    struct YankHistoryItem {
+        index: usize,
+        values: Arc<[String]>,
+    }
+
+    let register = cx
+        .register
+        .unwrap_or(cx.editor.config().default_yank_register);
+
+    match register {
+        '_' | '#' | '.' | '%' | '+' | '*' => {
+            cx.editor
+                .set_error(format!("No yank history for register {register}"));
+            return;
+        }
+        _ => {}
+    }
+
+    let Some(history) = cx.editor.registers.read_history(register) else {
+        cx.editor
+            .set_status(format!("No yank history for register {register}"));
+        return;
+    };
+
+    let items: Vec<YankHistoryItem> = history
+        .iter()
+        .enumerate()
+        .map(|(index, values)| YankHistoryItem {
+            index,
+            values: values.clone(),
+        })
+        .collect();
+
+    let columns = [
+        PickerColumn::new("index", |item: &YankHistoryItem, _| {
+            format!("{}", item.index).into()
+        }),
+        PickerColumn::new("contents", |item: &YankHistoryItem, _| {
+            item.values.join(" ").into()
+        }),
+    ];
+
+    let picker = Picker::new(columns, 1, items, (), move |cx, item, _action| {
+        let (view, doc) = current!(cx.editor);
+        paste_impl(&item.values, doc, view, paste_direction, 1, cx.editor.mode);
+    });
+
+    cx.push_layer(Box::new(overlaid(picker)));
+}
+
+fn yank_history_paste_after(cx: &mut Context) {
+    yank_history_paste(cx, Paste::After);
+}
+
+fn yank_history_paste_before(cx: &mut Context) {
+    yank_history_paste(cx, Paste::Before);
 }
 
 fn get_lines(doc: &Document, view_id: ViewId) -> Vec<usize> {
