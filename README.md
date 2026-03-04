@@ -30,6 +30,100 @@ All shortcuts/keymaps can be found [in the documentation on the website](https:/
 
 [Troubleshooting](https://github.com/helix-editor/helix/wiki/Troubleshooting)
 
+# My daily driver changes for Helix
+
+- Support for a `[global]` section in languages.toml. This allows language servers to be specified which apply to
+  all languages instead of needing to add a common server to each and every language. `inherit-global-language-servers: false`
+  will opt a specific language out of this if required. If a language specifies the same language server but with
+  different options it wins over the global one.
+- ghv command. This runs `ghv` from your path and passed the current filename and line number. ghv stands for "github view"
+  and is intended to load the file from the current repo on GitHub. Useful to sending links to co-workers or contributors.
+  Command is not included. My curernt version is quite simplistic:
+  ```
+  #!/bin/sh
+
+  ###
+  # Simple script to load Github and view a file.
+  ###
+  
+  REPO_PATH="$HOME/repos"
+  BRANCH="${BRANCH:-main}"
+  
+  make_absolute() {
+      filename=$1
+  
+      # Step 1. Ensure the filename is absolute. This ensures that even when called from
+      # deep in the tree the paths work.
+      case "$filename" in
+          /*)
+              # Absolute already, do nothing.
+              echo "$filename"
+              ;;
+          *)
+              echo "$PWD/$filename"
+              ;;
+      esac
+  }
+  
+  strip_local_repo_path() {
+      filename=$1
+      for base in 'work' 'personal' 'opensource'; do
+          # Now, a fancy pattern replace to strip off the absolute prefix.
+          stripped="${filename#"${REPO_PATH}/${base}/"}"
+          case "$stripped" in
+              /*)
+                  # Still has leading slash. This prefix did not match.
+                  ;;
+              *)
+                  # Clean, return it.
+                  echo "$stripped"
+                  return
+                  ;;
+          esac
+      done
+  
+      echo "No prefixes matched. Fail!" >/dev/stderr
+      exit 1
+  }
+  
+  # These are optional. Will simply load the source tree if left out.
+  filename=$1
+  linenumber=$2
+  
+  if [ -z "$filename" ]; then
+      BASE_URL="$(git remote get-url origin)"
+      if [ -z "$URL" ]; then
+          echo "Don't know what Github URL to load. Move into a git repo with an origin defined." >/dev/stderr
+          exit 1
+      fi
+      URL="${BASE_URL}/tree/${BRANCH}/"
+  else
+      filename=$(make_absolute "$filename")
+      BASE_URL="$(cd "$(dirname "$filename")" && git remote get-url origin)"
+      filename=$(strip_local_repo_path "$filename")
+      # Now pop off the next directory. This should be the repo name but this clone could have been renamed.
+      filename="${filename#*/}"
+  
+      URL="${BASE_URL}/blob/${BRANCH}/${filename}"
+  
+      if [ ! -z "$linenumber" ]; then
+          URL="${URL}#L${linenumber}"
+      fi
+  fi
+  
+  echo "$URL"
+  
+  case "$(uname -s)" in
+      Darwin)
+          CMD="open"
+          ;;
+      *)
+          CMD="xdg-open"
+          ;;
+  esac
+  $CMD "$URL"
+  ```
+
 # Features
 
 - Vim-like modal editing
