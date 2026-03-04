@@ -4936,11 +4936,6 @@ fn paste_before(cx: &mut Context) {
 }
 
 fn yank_history_paste(cx: &mut Context, paste_direction: Paste) {
-    struct YankHistoryItem {
-        index: usize,
-        values: Arc<[String]>,
-    }
-
     let register = cx
         .register
         .unwrap_or(cx.editor.config().default_yank_register);
@@ -4960,27 +4955,16 @@ fn yank_history_paste(cx: &mut Context, paste_direction: Paste) {
         return;
     };
 
-    let items: Vec<YankHistoryItem> = history
-        .iter()
-        .enumerate()
-        .map(|(index, values)| YankHistoryItem {
-            index,
-            values: values.clone(),
-        })
-        .collect();
+    let items: Vec<Arc<[String]>> = history.iter().cloned().collect();
 
-    let columns = [
-        PickerColumn::new("index", |item: &YankHistoryItem, _| {
-            format!("{}", item.index).into()
-        }),
-        PickerColumn::new("contents", |item: &YankHistoryItem, _| {
-            item.values.join(" ").into()
-        }),
-    ];
+    let columns = [PickerColumn::new(
+        "contents",
+        |item: &Arc<[String]>, _| item.join(" ").into(),
+    )];
 
-    let picker = Picker::new(columns, 1, items, (), move |cx, item, _action| {
+    let picker = Picker::new(columns, 0, items, (), move |cx, item, _action| {
         let (view, doc) = current!(cx.editor);
-        paste_impl(&item.values, doc, view, paste_direction, 1, cx.editor.mode);
+        paste_impl(item, doc, view, paste_direction, 1, cx.editor.mode);
     });
 
     cx.push_layer(Box::new(overlaid(picker)));
