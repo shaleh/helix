@@ -22,22 +22,23 @@ pub struct Configuration {
     pub global: GlobalConfiguration,
 }
 
-/// Appends global language servers to each language's server list.
+/// Resolves each language's effective server list by appending global servers.
 ///
 /// Global servers are appended after language-specific servers. If a server
 /// name already exists in a language's list, the language-specific entry
 /// takes precedence and the global entry is skipped (deduplication).
-/// Languages with `global_language_servers = false` are skipped entirely.
-pub fn resolve_global_language_servers(
+/// Languages with `inherit_global_language_servers = false` are skipped entirely.
+pub fn resolve_language_servers(
     mut languages: Vec<LanguageConfiguration>,
     global_servers: &[LanguageServerFeatures],
 ) -> Vec<LanguageConfiguration> {
-    for lang in &mut languages {
-        if lang.global_language_servers {
-            for server in global_servers {
-                if !lang.language_servers.iter().any(|s| s.name == server.name) {
-                    lang.language_servers.push(server.clone());
-                }
+    for lang in languages
+        .iter_mut()
+        .filter(|lang| lang.inherit_global_language_servers)
+    {
+        for server in global_servers {
+            if !lang.language_servers.iter().any(|s| s.name == server.name) {
+                lang.language_servers.push(server.clone());
             }
         }
     }
@@ -133,7 +134,7 @@ pub struct LanguageConfiguration {
     /// Whether global language servers should be appended to this language's
     /// server list. Defaults to true. Set to false to opt out of global servers.
     #[serde(default = "default_true")]
-    pub global_language_servers: bool,
+    pub inherit_global_language_servers: bool,
 
     pub rulers: Option<Vec<u16>>, // if set, override editor's rulers
 
@@ -724,7 +725,7 @@ mod tests {
             language-servers = ["lang-lsp"]
             "#,
         );
-        let languages = resolve_global_language_servers(
+        let languages = resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
@@ -750,7 +751,7 @@ mod tests {
             file-types = ["test"]
             "#,
         );
-        let languages = resolve_global_language_servers(
+        let languages = resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
@@ -773,7 +774,7 @@ mod tests {
             language-servers = ["lang-lsp"]
             "#,
         );
-        let languages = resolve_global_language_servers(
+        let languages = resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
@@ -798,7 +799,7 @@ mod tests {
             file-types = ["test"]
             "#,
         );
-        let languages = resolve_global_language_servers(
+        let languages = resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
@@ -827,7 +828,7 @@ mod tests {
             file-types = ["test"]
             "#,
         );
-        let languages = resolve_global_language_servers(
+        let languages = resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
@@ -855,7 +856,7 @@ mod tests {
             language-servers = [{ name = "shared-lsp", except-features = ["diagnostics"] }]
             "#,
         );
-        let languages = resolve_global_language_servers(
+        let languages = resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
@@ -870,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn opt_out_global_language_servers_false() {
+    fn opt_out_inherit_global_language_servers() {
         let config = parse_config(
             r#"
             [global]
@@ -883,17 +884,17 @@ mod tests {
             name = "test-lang"
             scope = "source.test"
             file-types = ["test"]
-            global-language-servers = false
+            inherit-global-language-servers = false
             "#,
         );
-        let languages = resolve_global_language_servers(
+        let languages = resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
         let lang = &languages[0];
         assert!(
             lang.language_servers.is_empty(),
-            "Language with global-language-servers = false should have no servers"
+            "Language with inherit-global-language-servers = false should have no servers"
         );
     }
 
@@ -914,7 +915,7 @@ mod tests {
             language-servers = []
             "#,
         );
-        let languages = resolve_global_language_servers(
+        let languages = resolve_language_servers(
             config.language,
             &config.global.language_servers,
         );
