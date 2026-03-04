@@ -18,6 +18,46 @@ pub struct Configuration {
     pub language: Vec<LanguageConfiguration>,
     #[serde(default)]
     pub language_server: HashMap<String, LanguageServerConfiguration>,
+    #[serde(default)]
+    pub global: GlobalConfiguration,
+}
+
+impl Configuration {
+    /// Resolves global language servers into each language's server list.
+    ///
+    /// Global servers are appended after language-specific servers. If a server
+    /// name already exists in a language's list, the language-specific entry
+    /// takes precedence and the global entry is skipped (deduplication).
+    /// Languages with `global_language_servers = false` are skipped entirely.
+    pub fn resolve_global_language_servers(self) -> Self {
+        let language = self
+            .language
+            .into_iter()
+            .map(|mut lang| {
+                if lang.global_language_servers {
+                    for server in &self.global.language_servers {
+                        if !lang.language_servers.iter().any(|s| s.name == server.name) {
+                            lang.language_servers.push(server.clone());
+                        }
+                    }
+                }
+                lang
+            })
+            .collect();
+        Self { language, ..self }
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct GlobalConfiguration {
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_lang_features",
+        deserialize_with = "deserialize_lang_features"
+    )]
+    pub language_servers: Vec<LanguageServerFeatures>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -93,6 +133,11 @@ pub struct LanguageConfiguration {
     /// global setting.
     #[serde(default, skip_serializing, deserialize_with = "deserialize_auto_pairs")]
     pub auto_pairs: Option<AutoPairs>,
+
+    /// Whether global language servers should be appended to this language's
+    /// server list. Defaults to true. Set to false to opt out of global servers.
+    #[serde(default = "default_true")]
+    pub global_language_servers: bool,
 
     pub rulers: Option<Vec<u16>>, // if set, override editor's rulers
 
@@ -363,7 +408,7 @@ enum LanguageServerFeatureConfiguration {
     Simple(String),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct LanguageServerFeatures {
     pub name: String,
     pub only: HashSet<LanguageServerFeature>,
@@ -643,6 +688,214 @@ where
     Ok(Option::<AutoPairConfig>::deserialize(deserializer)?.and_then(AutoPairConfig::into))
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_timeout() -> u64 {
     20
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_config(toml_str: &str) -> Configuration {
+        toml::from_str(toml_str).expect("Failed to parse test TOML config")
+    }
+
+    #[test]
+    fn global_servers_appended_to_existing() {
+        let config = parse_config(
+            r#"
+            [global]
+            language-servers = ["global-lsp"]
+
+            [language-server.global-lsp]
+            command = "global-lsp"
+
+            [language-server.lang-lsp]
+            command = "lang-lsp"
+
+            [[language]]
+            name = "test-lang"
+            scope = "source.test"
+            file-types = ["test"]
+            language-servers = ["lang-lsp"]
+            "#,
+        );
+        let config = config.resolve_global_language_servers();
+        let lang = &config.language[0];
+        assert_eq!(lang.language_servers.len(), 2);
+        assert_eq!(lang.language_servers[0].name, "lang-lsp");
+        assert_eq!(lang.language_servers[1].name, "global-lsp");
+    }
+
+    #[test]
+    fn global_servers_applied_to_language_without_servers() {
+        let config = parse_config(
+            r#"
+            [global]
+            language-servers = ["global-lsp"]
+
+            [language-server.global-lsp]
+            command = "global-lsp"
+
+            [[language]]
+            name = "test-lang"
+            scope = "source.test"
+            file-types = ["test"]
+            "#,
+        );
+        let config = config.resolve_global_language_servers();
+        let lang = &config.language[0];
+        assert_eq!(lang.language_servers.len(), 1);
+        assert_eq!(lang.language_servers[0].name, "global-lsp");
+    }
+
+    #[test]
+    fn no_global_section_no_change() {
+        let config = parse_config(
+            r#"
+            [language-server.lang-lsp]
+            command = "lang-lsp"
+
+            [[language]]
+            name = "test-lang"
+            scope = "source.test"
+            file-types = ["test"]
+            language-servers = ["lang-lsp"]
+            "#,
+        );
+        let config = config.resolve_global_language_servers();
+        let lang = &config.language[0];
+        assert_eq!(lang.language_servers.len(), 1);
+        assert_eq!(lang.language_servers[0].name, "lang-lsp");
+    }
+
+    #[test]
+    fn global_server_only_features_preserved() {
+        let config = parse_config(
+            r#"
+            [global]
+            language-servers = [{ name = "global-lsp", only-features = ["diagnostics"] }]
+
+            [language-server.global-lsp]
+            command = "global-lsp"
+
+            [[language]]
+            name = "test-lang"
+            scope = "source.test"
+            file-types = ["test"]
+            "#,
+        );
+        let config = config.resolve_global_language_servers();
+        let lang = &config.language[0];
+        assert_eq!(lang.language_servers.len(), 1);
+        let server = &lang.language_servers[0];
+        assert_eq!(server.name, "global-lsp");
+        assert!(server.only.contains(&LanguageServerFeature::Diagnostics));
+        assert!(!server.has_feature(LanguageServerFeature::Format));
+        assert!(server.has_feature(LanguageServerFeature::Diagnostics));
+    }
+
+    #[test]
+    fn global_server_except_features_preserved() {
+        let config = parse_config(
+            r#"
+            [global]
+            language-servers = [{ name = "global-lsp", except-features = ["format"] }]
+
+            [language-server.global-lsp]
+            command = "global-lsp"
+
+            [[language]]
+            name = "test-lang"
+            scope = "source.test"
+            file-types = ["test"]
+            "#,
+        );
+        let config = config.resolve_global_language_servers();
+        let lang = &config.language[0];
+        let server = &lang.language_servers[0];
+        assert!(server.excluded.contains(&LanguageServerFeature::Format));
+        assert!(!server.has_feature(LanguageServerFeature::Format));
+        assert!(server.has_feature(LanguageServerFeature::Diagnostics));
+    }
+
+    #[test]
+    fn dedup_language_specific_wins() {
+        let config = parse_config(
+            r#"
+            [global]
+            language-servers = ["shared-lsp"]
+
+            [language-server.shared-lsp]
+            command = "shared-lsp"
+
+            [[language]]
+            name = "test-lang"
+            scope = "source.test"
+            file-types = ["test"]
+            language-servers = [{ name = "shared-lsp", except-features = ["diagnostics"] }]
+            "#,
+        );
+        let config = config.resolve_global_language_servers();
+        let lang = &config.language[0];
+        assert_eq!(lang.language_servers.len(), 1);
+        let server = &lang.language_servers[0];
+        assert_eq!(server.name, "shared-lsp");
+        assert!(
+            server.excluded.contains(&LanguageServerFeature::Diagnostics),
+            "Language-specific feature filter should be preserved, not global"
+        );
+    }
+
+    #[test]
+    fn opt_out_global_language_servers_false() {
+        let config = parse_config(
+            r#"
+            [global]
+            language-servers = ["global-lsp"]
+
+            [language-server.global-lsp]
+            command = "global-lsp"
+
+            [[language]]
+            name = "test-lang"
+            scope = "source.test"
+            file-types = ["test"]
+            global-language-servers = false
+            "#,
+        );
+        let config = config.resolve_global_language_servers();
+        let lang = &config.language[0];
+        assert!(
+            lang.language_servers.is_empty(),
+            "Language with global-language-servers = false should have no servers"
+        );
+    }
+
+    #[test]
+    fn empty_language_servers_does_not_opt_out() {
+        let config = parse_config(
+            r#"
+            [global]
+            language-servers = ["global-lsp"]
+
+            [language-server.global-lsp]
+            command = "global-lsp"
+
+            [[language]]
+            name = "test-lang"
+            scope = "source.test"
+            file-types = ["test"]
+            language-servers = []
+            "#,
+        );
+        let config = config.resolve_global_language_servers();
+        let lang = &config.language[0];
+        assert_eq!(lang.language_servers.len(), 1);
+        assert_eq!(lang.language_servers[0].name, "global-lsp");
+    }
 }

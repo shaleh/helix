@@ -345,4 +345,58 @@ mod merge_toml_tests {
             &vec![Value::String("lsp".into())]
         )
     }
+
+    #[test]
+    fn global_section_merged_from_user() {
+        const BASE: &str = r#"
+        [[language]]
+        name = "rust"
+        scope = "source.rust"
+        file-types = ["rs"]
+        "#;
+
+        const USER: &str = r#"
+        [global]
+        language-servers = ["typos-lsp"]
+        "#;
+
+        let base: Value = toml::from_str(BASE).unwrap();
+        let user: Value = toml::from_str(USER).unwrap();
+        let merged = merge_toml_values(base, user, 3);
+
+        let global = merged.get("global").expect("[global] section must exist");
+        let servers = global
+            .get("language-servers")
+            .expect("language-servers key must exist")
+            .as_array()
+            .unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].as_str().unwrap(), "typos-lsp");
+    }
+
+    #[test]
+    fn global_sections_merged_across_configs() {
+        const BASE: &str = r#"
+        [global]
+        language-servers = [{ name = "base-lsp", only-features = ["diagnostics"] }]
+        "#;
+
+        const USER: &str = r#"
+        [global]
+        language-servers = ["user-lsp"]
+        "#;
+
+        let base: Value = toml::from_str(BASE).unwrap();
+        let user: Value = toml::from_str(USER).unwrap();
+        let merged = merge_toml_values(base, user, 3);
+
+        let global = merged.get("global").unwrap();
+        let servers = global
+            .get("language-servers")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        // base-lsp should be present (from base) and user-lsp appended (from user)
+        assert_eq!(servers.len(), 2);
+    }
 }
