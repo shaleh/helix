@@ -32,16 +32,16 @@ pub fn resolve_language_servers(
     mut languages: Vec<LanguageConfiguration>,
     global_servers: &[LanguageServerFeatures],
 ) -> Vec<LanguageConfiguration> {
-    for lang in languages
+    languages
         .iter_mut()
         .filter(|lang| lang.inherit_global_language_servers)
-    {
-        for server in global_servers {
-            if !lang.language_servers.iter().any(|s| s.name == server.name) {
-                lang.language_servers.push(server.clone());
+        .for_each(|lang| {
+            for server in global_servers {
+                if !lang.language_servers.iter().any(|s| s.name == server.name) {
+                    lang.language_servers.push(server.clone());
+                }
             }
-        }
-    }
+        });
     languages
 }
 
@@ -725,10 +725,7 @@ mod tests {
             language-servers = ["lang-lsp"]
             "#,
         );
-        let languages = resolve_language_servers(
-            config.language,
-            &config.global.language_servers,
-        );
+        let languages = resolve_language_servers(config.language, &config.global.language_servers);
         let lang = &languages[0];
         assert_eq!(lang.language_servers.len(), 2);
         assert_eq!(lang.language_servers[0].name, "lang-lsp");
@@ -751,10 +748,7 @@ mod tests {
             file-types = ["test"]
             "#,
         );
-        let languages = resolve_language_servers(
-            config.language,
-            &config.global.language_servers,
-        );
+        let languages = resolve_language_servers(config.language, &config.global.language_servers);
         let lang = &languages[0];
         assert_eq!(lang.language_servers.len(), 1);
         assert_eq!(lang.language_servers[0].name, "global-lsp");
@@ -774,10 +768,7 @@ mod tests {
             language-servers = ["lang-lsp"]
             "#,
         );
-        let languages = resolve_language_servers(
-            config.language,
-            &config.global.language_servers,
-        );
+        let languages = resolve_language_servers(config.language, &config.global.language_servers);
         let lang = &languages[0];
         assert_eq!(lang.language_servers.len(), 1);
         assert_eq!(lang.language_servers[0].name, "lang-lsp");
@@ -799,10 +790,7 @@ mod tests {
             file-types = ["test"]
             "#,
         );
-        let languages = resolve_language_servers(
-            config.language,
-            &config.global.language_servers,
-        );
+        let languages = resolve_language_servers(config.language, &config.global.language_servers);
         let lang = &languages[0];
         assert_eq!(lang.language_servers.len(), 1);
         let server = &lang.language_servers[0];
@@ -828,10 +816,7 @@ mod tests {
             file-types = ["test"]
             "#,
         );
-        let languages = resolve_language_servers(
-            config.language,
-            &config.global.language_servers,
-        );
+        let languages = resolve_language_servers(config.language, &config.global.language_servers);
         let lang = &languages[0];
         let server = &lang.language_servers[0];
         assert!(server.excluded.contains(&LanguageServerFeature::Format));
@@ -856,16 +841,15 @@ mod tests {
             language-servers = [{ name = "shared-lsp", except-features = ["diagnostics"] }]
             "#,
         );
-        let languages = resolve_language_servers(
-            config.language,
-            &config.global.language_servers,
-        );
+        let languages = resolve_language_servers(config.language, &config.global.language_servers);
         let lang = &languages[0];
         assert_eq!(lang.language_servers.len(), 1);
         let server = &lang.language_servers[0];
         assert_eq!(server.name, "shared-lsp");
         assert!(
-            server.excluded.contains(&LanguageServerFeature::Diagnostics),
+            server
+                .excluded
+                .contains(&LanguageServerFeature::Diagnostics),
             "Language-specific feature filter should be preserved, not global"
         );
     }
@@ -887,10 +871,7 @@ mod tests {
             inherit-global-language-servers = false
             "#,
         );
-        let languages = resolve_language_servers(
-            config.language,
-            &config.global.language_servers,
-        );
+        let languages = resolve_language_servers(config.language, &config.global.language_servers);
         let lang = &languages[0];
         assert!(
             lang.language_servers.is_empty(),
@@ -915,10 +896,7 @@ mod tests {
             language-servers = []
             "#,
         );
-        let languages = resolve_language_servers(
-            config.language,
-            &config.global.language_servers,
-        );
+        let languages = resolve_language_servers(config.language, &config.global.language_servers);
         let lang = &languages[0];
         assert_eq!(lang.language_servers.len(), 1);
         assert_eq!(lang.language_servers[0].name, "global-lsp");
