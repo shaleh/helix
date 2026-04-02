@@ -77,6 +77,89 @@ These configuration keys are available:
 | `persistent-diagnostic-sources` | An array of LSP diagnostic sources assumed unchanged when the language server resends the same set of diagnostics. Helix can track the position for these diagnostics internally instead. Useful for diagnostics that are recomputed on save.
 | `rainbow-brackets` | Overrides the `editor.rainbow-brackets` config key for the language |
 
+### File-type detection and the `file-types` key
+
+Helix determines which language configuration to use based on the `file-types` key
+from the above section. `file-types` is a list of strings or tables, for
+example:
+
+```toml
+file-types = ["toml", { glob = "Makefile" }, { glob = ".git/config" }, { glob = ".github/workflows/*.yaml" } ]
+```
+
+When determining a language configuration to use, Helix searches the file-types
+with the following priorities:
+
+1. Glob: values in `glob` tables are checked against the full path of the given
+   file. Globs are standard Unix-style path globs (e.g. the kind you use in Shell)
+   and can be used to match paths for a specific prefix, suffix, directory, etc.
+   In the above example, the `{ glob = "Makefile" }` config would match files
+   with the name `Makefile`, the `{ glob = ".git/config" }` config would match
+   `config` files in `.git` directories, and the `{ glob = ".github/workflows/*.yaml" }`
+   config would match any `yaml` files in `.github/workflow` directories. Note
+   that globs should always use the Unix path separator `/` even on Windows systems;
+   the matcher will automatically take the machine-specific separators into account.
+   If the glob isn't an absolute path or doesn't already start with a glob prefix,
+   `*/` will automatically be added to ensure it matches for any subdirectory.
+2. Extension: if there are no glob matches, any `file-types` string that matches
+   the file extension of a given file wins. In the example above, the `"toml"`
+   config matches files like `Cargo.toml` or `languages.toml`.
+
+### Modeline support
+
+Helix supports modelines: special comments in a file that declare the
+language, indent style, or line ending. Helix searches the first 5 and last
+5 lines of a file for modelines.
+
+When a modeline is found, the detection priority is:
+
+1. **Language**: modeline > filename/extension > shebang
+2. **Indent and line ending**: EditorConfig > modeline > auto-detection
+
+#### Vim modelines
+
+Helix recognizes vim-style modelines in the following forms:
+
+```
+# vim: ft=python sw=4 et
+# vim: set ft=ruby noet :
+```
+
+Supported options:
+
+| Option       | Alias | Description                         |
+| ------------ | ----- | ----------------------------------- |
+| `filetype`   | `ft`  | Language name                       |
+| `shiftwidth` | `sw`  | Indent width (number of spaces)     |
+| `expandtab`  | `et`  | Use spaces for indentation          |
+| `noexpandtab`| `noet`| Use tabs for indentation            |
+| `fileformat` | `ff`  | Line ending: `unix`, `dos`, or `mac`|
+
+The language name is matched against Helix's language names first, then
+against shebang aliases (e.g. `sh` resolves to `bash`).
+
+#### Emacs modelines
+
+Helix also recognizes Emacs-style modelines for language detection:
+
+```
+# -*- mode: python -*-
+# -*- ruby -*-
+```
+
+Emacs modelines only set the language; indent and line ending options are
+not extracted.
+
+### Configuring the formatter command
+
+[Command line expansions](./command-line.md#expansions) are supported in the arguments
+of the formatter command. In particular, the `%{buffer_name}` variable can be passed as
+argument to the formatter:
+
+```toml
+formatter = { command = "mylang-formatter" , args = ["--stdin", "--stdin-filename", "%{buffer_name}"] }
+```
+
 ## Project and LSP root selection
 
 This is the model Helix uses:

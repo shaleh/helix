@@ -3674,7 +3674,8 @@ async fn make_format_callback(
                 if doc.version() == doc_version {
                     doc.apply(&format, view.id);
                     doc.append_changes_to_history(view);
-                    doc.detect_indent_and_line_ending();
+                    let modeline = helix_core::modeline::Modeline::parse(doc.text().slice(..));
+                    doc.detect_indent_and_line_ending(&modeline);
                     view.ensure_cursor_in_view(doc, scrolloff);
                 } else {
                     log::info!("discarded formatting changes because the document changed");
