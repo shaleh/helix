@@ -1219,6 +1219,9 @@ impl Document {
             indent_style
         } else if let Some(indent_style) = modeline.indent_style() {
             indent_style
+        } else if modeline.expandtab() == Some(true) {
+            // expandtab without explicit shiftwidth: use the document's tab width
+            IndentStyle::Spaces(self.tab_width() as u8)
         } else {
             auto_detect_indent_style(&self.text).unwrap_or_else(|| {
                 self.language_config()
