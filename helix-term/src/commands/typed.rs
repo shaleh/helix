@@ -2246,7 +2246,8 @@ fn language(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> any
     } else {
         doc.set_language_by_language_id(&args[0], &loader)?;
     }
-    doc.detect_indent_and_line_ending();
+    let modeline = helix_core::modeline::Modeline::parse(doc.text().slice(..));
+    doc.detect_indent_and_line_ending(&modeline);
 
     let id = doc.id();
     cx.editor.refresh_language_servers(id);

@@ -104,6 +104,51 @@ with the following priorities:
    the file extension of a given file wins. In the example above, the `"toml"`
    config matches files like `Cargo.toml` or `languages.toml`.
 
+### Modeline support
+
+Helix supports modelines: special comments in a file that declare the
+language, indent style, or line ending. Helix searches the first 5 and last
+5 lines of a file for modelines.
+
+When a modeline is found, the detection priority is:
+
+1. **Language**: modeline > filename/extension > shebang
+2. **Indent and line ending**: EditorConfig > modeline > auto-detection
+
+#### Vim modelines
+
+Helix recognizes vim-style modelines in the following forms:
+
+```
+# vim: ft=python sw=4 et
+# vim: set ft=ruby noet :
+```
+
+Supported options:
+
+| Option       | Alias | Description                         |
+| ------------ | ----- | ----------------------------------- |
+| `filetype`   | `ft`  | Language name                       |
+| `shiftwidth` | `sw`  | Indent width (number of spaces)     |
+| `expandtab`  | `et`  | Use spaces for indentation          |
+| `noexpandtab`| `noet`| Use tabs for indentation            |
+| `fileformat` | `ff`  | Line ending: `unix`, `dos`, or `mac`|
+
+The language name is matched against Helix's language names first, then
+against shebang aliases (e.g. `sh` resolves to `bash`).
+
+#### Emacs modelines
+
+Helix also recognizes Emacs-style modelines for language detection:
+
+```
+# -*- mode: python -*-
+# -*- ruby -*-
+```
+
+Emacs modelines only set the language; indent and line ending options are
+not extracted.
+
 ### Configuring the formatter command
 
 [Command line expansions](./command-line.md#expansions) are supported in the arguments

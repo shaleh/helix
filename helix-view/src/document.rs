@@ -789,7 +789,8 @@ impl Document {
         }
 
         doc.editor_config = editor_config;
-        doc.detect_indent_and_line_ending();
+        let modeline = helix_core::modeline::Modeline::parse(doc.text().slice(..));
+        doc.detect_indent_and_line_ending(&modeline);
 
         Ok(doc)
     }
@@ -1147,16 +1148,31 @@ impl Document {
 
     /// Detect the programming language based on the file type.
     pub fn detect_language(&mut self, loader: &syntax::Loader) {
-        self.set_language(self.detect_language_config(loader), loader);
+        let modeline = helix_core::modeline::Modeline::parse(self.text().slice(..));
+        self.set_language(self.detect_language_config(loader, &modeline), loader);
     }
 
     /// Detect the programming language based on the file type.
     pub fn detect_language_config(
         &self,
         loader: &syntax::Loader,
+        modeline: &helix_core::modeline::Modeline,
     ) -> Option<Arc<syntax::config::LanguageConfiguration>> {
-        let language = loader
-            .language_for_filename(self.path.as_ref()?)
+        // Modeline language takes highest priority.
+        let language = modeline
+            .language()
+            .and_then(|name| {
+                let lang = loader.language_for_name_or_alias(name);
+                if lang.is_none() {
+                    log::warn!("Unrecognized modeline language: {name}");
+                }
+                lang
+            })
+            .or_else(|| {
+                self.path
+                    .as_ref()
+                    .and_then(|path| loader.language_for_filename(path))
+            })
             .or_else(|| loader.language_for_shebang(self.text().slice(..)))?;
 
         Some(loader.language(language).config().clone())
@@ -1165,8 +1181,12 @@ impl Document {
     /// Detect the indentation used in the file, or otherwise defaults to the language indentation
     /// configured in `languages.toml`, with a fallback to tabs if it isn't specified. Line ending
     /// is likewise auto-detected, and will remain unchanged if no line endings were detected.
-    pub fn detect_indent_and_line_ending(&mut self) {
+    ///
+    /// Priority: EditorConfig > modeline > auto-detection > language config > defaults.
+    pub fn detect_indent_and_line_ending(&mut self, modeline: &helix_core::modeline::Modeline) {
         self.indent_style = if let Some(indent_style) = self.editor_config.indent_style {
+            indent_style
+        } else if let Some(indent_style) = modeline.indent_style() {
             indent_style
         } else {
             auto_detect_indent_style(&self.text).unwrap_or_else(|| {
@@ -1178,6 +1198,7 @@ impl Document {
         if let Some(line_ending) = self
             .editor_config
             .line_ending
+            .or(modeline.line_ending())
             .or_else(|| auto_detect_line_ending(&self.text))
         {
             self.line_ending = line_ending;
@@ -1249,7 +1270,8 @@ impl Document {
         self.append_changes_to_history(view);
         self.reset_modified();
         self.pickup_last_saved_time();
-        self.detect_indent_and_line_ending();
+        let modeline = helix_core::modeline::Modeline::parse(self.text().slice(..));
+        self.detect_indent_and_line_ending(&modeline);
 
         match provider_registry.get_diff_base(&path) {
             Some(diff_base) => self.set_diff_base(diff_base),
