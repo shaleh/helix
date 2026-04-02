@@ -1,5 +1,6 @@
 # My daily driver changes for Helix
 
+- Modeline support. Tries vi then emacs before falling back to the usual detection methods.
 - Support for a `[global]` section in languages.toml. This allows language servers to be specified which apply to
   all languages instead of needing to add a common server to each and every language. `inherit-global-language-servers: false`
   will opt a specific language out of this if required. If a language specifies the same language server but with
