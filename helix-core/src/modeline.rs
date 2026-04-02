@@ -1,5 +1,6 @@
 use helix_stdx::rope::Regex;
 use once_cell::sync::Lazy;
+use regex_cursor::regex_automata::Match;
 
 use crate::indent::IndentStyle;
 use crate::line_ending::LineEnding;
@@ -8,87 +9,49 @@ use crate::RopeSlice;
 /// Maximum number of lines to search at the beginning and end of a file.
 const SEARCH_LINES: usize = 5;
 
-// Vim modeline regex, anchored to prevent false positives.
-// Matches: `vim:`, `vi:`, `Vim:`, `ex:` with optional version and `set` keyword.
-// The prefix is limited to 100 characters per vim convention.
-static VIM_MODELINE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^.{0,100}\s?(vi|[vV]im[<=>]?\d{0,100}|ex):\s{0,100}(se(t\s{1,100})?)?(.+)")
-        .unwrap()
-});
-
-// Emacs modeline regex. Matches `-*- mode: python -*-` or `-*- python -*-`.
-// Only extracts language (no indent/line-ending support for emacs modelines).
-static EMACS_MODELINE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"-\*-\s*(?:mode:\s*)?(\w[\w+-]*)\s*-\*-").unwrap()
-});
-
-/// Parsed modeline directives from a file's content.
+/// A modeline format defines how to detect and extract settings from a single line.
 ///
-/// Modelines are special comments (vim-style or emacs-style) that declare
-/// language, indent style, and line ending preferences within the file itself.
-/// Only the first 5 and last 5 lines are searched.
-#[derive(Debug, Default)]
-pub struct Modeline {
-    language: Option<String>,
-    indent_style: Option<IndentStyle>,
-    line_ending: Option<LineEnding>,
+/// Implementors provide a regex to match against each line and a method to
+/// extract settings from the matched region. New formats (e.g. helix-native)
+/// can be added by implementing this trait and registering in `MODELINE_PARSERS`.
+trait ModelineFormat {
+    fn regex(&self) -> &Regex;
+
+    /// Given the regex match and the full line, return the byte range within
+    /// the line that contains the parseable content.
+    fn content_range(&self, mat: &Match, line_len: usize) -> std::ops::Range<usize>;
+
+    /// Parse the content slice and apply any recognized settings to the modeline.
+    fn parse(&self, modeline: &mut Modeline, content: &str);
 }
 
-impl Modeline {
-    /// Parse modelines from the first 5 and last 5 lines of the given text.
-    pub fn parse(text: RopeSlice) -> Self {
-        let total_lines = text.len_lines();
-        let mut modeline = Modeline::default();
+struct VimFormat;
+struct EmacsFormat;
 
-        // Collect line indices to search: first 5 and last 5 (deduplicated).
-        let head_end = SEARCH_LINES.min(total_lines);
-        let tail_start = total_lines.saturating_sub(SEARCH_LINES).max(head_end);
-
-        for line_idx in (0..head_end).chain(tail_start..total_lines) {
-            let line = text.line(line_idx);
-            // Vim takes priority over emacs.
-            if modeline.parse_vim_modeline(line) {
-                return modeline;
-            }
-            if modeline.parse_emacs_modeline(line) {
-                return modeline;
-            }
-        }
-
-        modeline
+impl ModelineFormat for VimFormat {
+    fn regex(&self) -> &Regex {
+        // Anchored to prevent false positives. Matches the prefix up to (and
+        // including) the `vim:` marker and optional `set` keyword. The prefix
+        // is limited to 100 characters per vim convention.
+        static REGEX: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(
+                r"^.{0,100}\s?(?:vi|[vV]im[<=>]?\d{0,100}|ex):\s{0,100}(?:se(?:t\s{1,100})?)?",
+            )
+            .unwrap()
+        });
+        &REGEX
     }
 
-    /// Try to parse a vim-style modeline from a single line.
-    /// Returns `true` if a vim modeline was found.
-    fn parse_vim_modeline(&mut self, line: RopeSlice) -> bool {
-        let line_str: std::borrow::Cow<str> = line.into();
-
-        let Some(captures) = VIM_MODELINE_REGEX
-            .captures_iter(regex_cursor::Input::new(line))
-            .next()
-        else {
-            return false;
-        };
-
-        // Group 4 contains the options string after the vim: prefix.
-        let Some(options_match) = captures.get_group(4) else {
-            return false;
-        };
-        let options_range = options_match.range();
-        let options_str = &line_str[options_range.start..options_range.end];
-
-        self.parse_vim_options(options_str);
-        true
+    fn content_range(&self, mat: &Match, line_len: usize) -> std::ops::Range<usize> {
+        // Everything after the regex match is the options string.
+        mat.end()..line_len
     }
 
-    /// Parse vim option key=value pairs from the options portion of a modeline.
-    fn parse_vim_options(&mut self, options: &str) {
-        // Vim options are separated by spaces or colons.
-        // The trailing colon terminates the `set` form.
+    fn parse(&self, modeline: &mut Modeline, content: &str) {
         let mut shiftwidth: Option<u8> = None;
         let mut expandtab: Option<bool> = None;
 
-        for option in options.split([' ', ':']) {
+        for option in split_vim_options(content) {
             let option = option.trim();
             if option.is_empty() {
                 continue;
@@ -97,13 +60,13 @@ impl Modeline {
             if let Some((key, value)) = option.split_once('=') {
                 match key {
                     "ft" | "filetype" => {
-                        self.language = Some(value.to_string());
+                        modeline.language = Some(value.to_string());
                     }
                     "sw" | "shiftwidth" => {
                         shiftwidth = value.parse::<u8>().ok();
                     }
                     "ff" | "fileformat" => {
-                        self.line_ending = LineEnding::from_vim_option(value);
+                        modeline.line_ending = LineEnding::from_vim_option(value);
                     }
                     _ => {}
                 }
@@ -116,33 +79,90 @@ impl Modeline {
             }
         }
 
-        // Combine shiftwidth and expandtab into an IndentStyle.
+        // Always record expandtab state so callers can apply it with document context.
+        modeline.expandtab = expandtab;
+
+        // Combine shiftwidth and expandtab into an IndentStyle when both are available.
         if let Some(sw) = shiftwidth {
-            self.indent_style = Some(IndentStyle::from_vim_option(sw, expandtab));
+            modeline.indent_style = Some(IndentStyle::from_vim_option(sw, expandtab));
         } else if expandtab == Some(false) {
-            self.indent_style = Some(IndentStyle::Tabs);
+            // noet without sw — tabs regardless of width
+            modeline.indent_style = Some(IndentStyle::Tabs);
         }
+        // et without sw: indent_style stays None, but expandtab is recorded.
+        // The caller should use the document's tab width to construct Spaces(tab_width).
+    }
+}
+
+impl ModelineFormat for EmacsFormat {
+    fn regex(&self) -> &Regex {
+        // Matches `-*- mode: python -*-` or `-*- python -*-`.
+        static REGEX: Lazy<Regex> =
+            Lazy::new(|| Regex::new(r"-\*-[^-]*-\*-").unwrap());
+        &REGEX
     }
 
-    /// Try to parse an Emacs-style modeline from a single line.
-    /// Only extracts language; emacs modelines don't set indent/line-ending in our implementation.
-    /// Returns `true` if an emacs modeline was found.
-    fn parse_emacs_modeline(&mut self, line: RopeSlice) -> bool {
-        let line_str: std::borrow::Cow<str> = line.into();
+    fn content_range(&self, mat: &Match, _line_len: usize) -> std::ops::Range<usize> {
+        // Content between the `-*-` delimiters.
+        (mat.start() + 3)..(mat.end().saturating_sub(3))
+    }
 
-        let Some(captures) = EMACS_MODELINE_REGEX
-            .captures_iter(regex_cursor::Input::new(line))
-            .next()
-        else {
-            return false;
+    fn parse(&self, modeline: &mut Modeline, content: &str) {
+        let content = content.trim();
+
+        // Strip `mode:` prefix if present, then trim to get the language name.
+        let lang = if let Some(rest) = content.strip_prefix("mode:") {
+            rest.trim()
+        } else {
+            content
         };
 
-        let Some(lang_match) = captures.get_group(1) else {
-            return false;
-        };
-        let range = lang_match.range();
-        self.language = Some(line_str[range.start..range.end].to_string());
-        true
+        if !lang.is_empty() {
+            modeline.language = Some(lang.to_string());
+        }
+    }
+}
+
+/// Ordered list of modeline parsers. Tried in sequence per line; first match wins.
+/// Vim is listed before Emacs so it takes priority when both are present.
+const MODELINE_PARSERS: &[&dyn ModelineFormat] = &[&VimFormat, &EmacsFormat];
+
+/// Parsed modeline directives from a file's content.
+///
+/// Modelines are special comments (vim-style or emacs-style) that declare
+/// language, indent style, and line ending preferences within the file itself.
+/// Only the first and last `SEARCH_LINES` lines are searched.
+#[derive(Debug, Default)]
+pub struct Modeline {
+    language: Option<String>,
+    indent_style: Option<IndentStyle>,
+    line_ending: Option<LineEnding>,
+    /// Tracks expandtab/noexpandtab independently of indent_style.
+    /// When expandtab is set without an explicit shiftwidth, the caller
+    /// can apply it using the document's current tab width.
+    expandtab: Option<bool>,
+}
+
+impl Modeline {
+    /// Parse modelines from the first and last [`SEARCH_LINES`] lines of the given text.
+    pub fn parse(text: RopeSlice) -> Self {
+        let total_lines = text.len_lines();
+        let mut modeline = Modeline::default();
+
+        let head_end = SEARCH_LINES.min(total_lines);
+        let tail_start = total_lines.saturating_sub(SEARCH_LINES).max(head_end);
+
+        for line_idx in (0..head_end).chain(tail_start..total_lines) {
+            let line = text.line(line_idx);
+
+            for parser in MODELINE_PARSERS {
+                if try_parse_modeline(&mut modeline, parser, line) {
+                    return modeline;
+                }
+            }
+        }
+
+        modeline
     }
 
     pub fn language(&self) -> Option<&str> {
@@ -156,6 +176,63 @@ impl Modeline {
     pub fn line_ending(&self) -> Option<LineEnding> {
         self.line_ending
     }
+
+    /// Returns the expandtab setting from the modeline, if specified.
+    /// When `Some(true)` (expandtab) is returned without an `indent_style`,
+    /// the caller should apply spaces using the document's current tab width.
+    pub fn expandtab(&self) -> Option<bool> {
+        self.expandtab
+    }
+}
+
+/// Try a single modeline format against a line. Returns true if it matched.
+fn try_parse_modeline(
+    modeline: &mut Modeline,
+    format: &&dyn ModelineFormat,
+    line: RopeSlice,
+) -> bool {
+    let Some(mat) = format.regex().find(regex_cursor::Input::new(line)) else {
+        return false;
+    };
+
+    let range = format.content_range(&mat, line.len_bytes());
+    if range.start >= range.end {
+        return false;
+    }
+
+    let content: std::borrow::Cow<str> = line.byte_slice(range).into();
+    format.parse(modeline, &content);
+    true
+}
+
+/// Split vim modeline options on unescaped spaces and colons.
+/// Escaped colons (`\:`) are treated as literal colons within values.
+fn split_vim_options(options: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    let bytes = options.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            // Skip escaped character
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b' ' || bytes[i] == b':' {
+            if start < i {
+                result.push(&options[start..i]);
+            }
+            start = i + 1;
+        }
+        i += 1;
+    }
+
+    if start < bytes.len() {
+        result.push(&options[start..]);
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -195,7 +272,6 @@ mod test {
 
     #[test]
     fn vim_modeline_outside_range_not_detected() {
-        // 11 lines, modeline on line 6 (0-indexed: 5) — outside first 5 and last 5
         let mut text = String::new();
         for i in 0..11 {
             if i == 5 {
@@ -257,7 +333,6 @@ mod test {
     fn vim_modeline_shiftwidth_without_expandtab() {
         let doc = Rope::from("# vim: sw=2\n");
         let modeline = Modeline::parse(doc.slice(..));
-        // Without explicit et/noet, defaults to spaces (vim-like default)
         assert_eq!(modeline.indent_style(), Some(IndentStyle::Spaces(2)));
     }
 
@@ -285,10 +360,34 @@ mod test {
     }
 
     #[test]
-    fn vim_modeline_expandtab_without_shiftwidth() {
+    fn vim_modeline_noexpandtab_without_shiftwidth() {
         let doc = Rope::from("# vim: noet\n");
         let modeline = Modeline::parse(doc.slice(..));
         assert_eq!(modeline.indent_style(), Some(IndentStyle::Tabs));
+    }
+
+    #[test]
+    fn vim_modeline_expandtab_without_shiftwidth() {
+        let doc = Rope::from("# vim: et\n");
+        let modeline = Modeline::parse(doc.slice(..));
+        assert_eq!(modeline.indent_style(), None);
+        assert_eq!(modeline.expandtab(), Some(true));
+    }
+
+    #[test]
+    fn vim_modeline_escaped_colon_in_value() {
+        let doc = Rope::from("# vim: ft=python sw=4\n");
+        let modeline = Modeline::parse(doc.slice(..));
+        assert_eq!(modeline.language(), Some("python"));
+        assert_eq!(modeline.indent_style(), Some(IndentStyle::Spaces(4)));
+    }
+
+    #[test]
+    fn vim_modeline_colon_separated_options() {
+        let doc = Rope::from("# vim: ft=rust:sw=2:et\n");
+        let modeline = Modeline::parse(doc.slice(..));
+        assert_eq!(modeline.language(), Some("rust"));
+        assert_eq!(modeline.indent_style(), Some(IndentStyle::Spaces(2)));
     }
 
     #[test]
@@ -318,5 +417,17 @@ mod test {
         let doc = Rope::from("# vim: ft=rust\n# -*- mode: python -*-\n");
         let modeline = Modeline::parse(doc.slice(..));
         assert_eq!(modeline.language(), Some("rust"));
+    }
+
+    #[test]
+    fn split_vim_options_handles_escaped_colons() {
+        let opts = split_vim_options(r"ft=foo\:bar:sw=4");
+        assert_eq!(opts, vec![r"ft=foo\:bar", "sw=4"]);
+    }
+
+    #[test]
+    fn split_vim_options_handles_spaces_and_colons() {
+        let opts = split_vim_options("ft=python sw=4:et");
+        assert_eq!(opts, vec!["ft=python", "sw=4", "et"]);
     }
 }
