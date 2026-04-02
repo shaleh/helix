@@ -342,6 +342,16 @@ impl Loader {
         })
     }
 
+    /// Looks up a language by name, falling back to shebang aliases.
+    ///
+    /// First tries an exact match against `language_id`, then checks
+    /// `languages_by_shebang` which contains aliases from `languages.toml`
+    /// (e.g., `"sh"` → bash, `"node"` → javascript).
+    pub fn language_for_name_or_alias(&self, name: &str) -> Option<Language> {
+        self.language_for_name(name)
+            .or_else(|| self.languages_by_shebang.get(name).copied())
+    }
+
     pub fn language_for_scope(&self, scope: &str) -> Option<Language> {
         self.languages.iter().enumerate().find_map(|(idx, config)| {
             (scope == config.config.scope).then_some(Language(idx as u32))
