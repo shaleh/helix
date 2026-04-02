@@ -654,7 +654,8 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                                 "Cannot open document",
                             )))?;
                             let loader = editor.syn_loader.load();
-                            if let Some(language_config) = doc.detect_language_config(&loader) {
+                            let modeline = helix_core::modeline::Modeline::parse(doc.text().slice(..));
+                            if let Some(language_config) = doc.detect_language_config(&loader, &modeline) {
                                 doc.language = Some(language_config);
                                 // Asynchronously highlight the new document
                                 helix_event::send_blocking(

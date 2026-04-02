@@ -60,6 +60,18 @@ impl IndentStyle {
         }
     }
 
+    /// Creates an `IndentStyle` from vim modeline options.
+    ///
+    /// `shiftwidth` is the number of spaces per indent level.
+    /// `expandtab` controls whether to use spaces (`Some(true)` or `None`) or tabs (`Some(false)`).
+    pub fn from_vim_option(shiftwidth: u8, expandtab: Option<bool>) -> Self {
+        match expandtab {
+            Some(false) => IndentStyle::Tabs,
+            // vim defaults to expandtab-like behavior when sw is set without et/noet
+            _ => IndentStyle::Spaces(shiftwidth.clamp(1, MAX_INDENT)),
+        }
+    }
+
     #[inline]
     pub fn indent_width(&self, tab_width: usize) -> usize {
         match *self {
