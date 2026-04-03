@@ -589,57 +589,69 @@ pub fn suggest_lightness_fix(
 
 /// Find the minimum OKLAB lightness adjustment to a background color
 /// to reach a target contrast ratio against a fixed foreground.
-/// This is the inverse of `suggest_lightness_fix` — adjusts bg instead of fg.
+/// Tries both darkening and lightening the bg, returns whichever
+/// requires the smallest change from the original.
 pub fn suggest_bg_lightness_fix(
     fg: (u8, u8, u8),
     bg: (u8, u8, u8),
     target_ratio: f64,
 ) -> Option<(u8, u8, u8)> {
-    let fg_lum = relative_luminance(fg.0, fg.1, fg.2);
-    let bg_lum = relative_luminance(bg.0, bg.1, bg.2);
     let bg_lab = srgb_to_oklab(bg.0, bg.1, bg.2);
 
-    // Move bg away from fg: darken bg if fg is lighter, lighten bg if fg is darker.
-    let fg_is_lighter = fg_lum > bg_lum;
+    let try_direction = |search_lo: f64, search_hi: f64, darken: bool| -> Option<(u8, u8, u8)> {
+        let extreme_l = if darken { search_lo } else { search_hi };
+        let extreme = Oklab { l: extreme_l, ..bg_lab };
+        let extreme_rgb = oklab_to_srgb(extreme);
+        if contrast_ratio(fg, extreme_rgb) < target_ratio {
+            return None;
+        }
 
-    let (mut lo, mut hi) = if fg_is_lighter {
-        (0.0, bg_lab.l) // darken bg
-    } else {
-        (bg_lab.l, 1.0) // lighten bg
+        let mut lo = search_lo;
+        let mut hi = search_hi;
+        for _ in 0..32 {
+            let mid = (lo + hi) / 2.0;
+            let candidate = Oklab { l: mid, ..bg_lab };
+            let rgb = oklab_to_srgb(candidate);
+            let ratio = contrast_ratio(fg, rgb);
+
+            if darken {
+                if ratio < target_ratio {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            } else if ratio < target_ratio {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+
+        let result_l = if darken { lo } else { hi };
+        let result = Oklab { l: result_l, ..bg_lab };
+        let rgb = oklab_to_srgb(result);
+
+        if contrast_ratio(fg, rgb) >= target_ratio {
+            Some(rgb)
+        } else {
+            None
+        }
     };
 
-    let extreme = Oklab { l: if fg_is_lighter { lo } else { hi }, ..bg_lab };
-    let extreme_rgb = oklab_to_srgb(extreme);
-    let extreme_ratio = contrast_ratio(fg, extreme_rgb);
-    if extreme_ratio < target_ratio {
-        return None;
-    }
+    // Try both directions
+    let darker = try_direction(0.0, bg_lab.l, true);
+    let lighter = try_direction(bg_lab.l, 1.0, false);
 
-    for _ in 0..32 {
-        let mid = (lo + hi) / 2.0;
-        let candidate = Oklab { l: mid, ..bg_lab };
-        let rgb = oklab_to_srgb(candidate);
-        let ratio = contrast_ratio(fg, rgb);
-
-        if fg_is_lighter && ratio < target_ratio {
-            hi = mid; // need darker bg
-        } else if fg_is_lighter {
-            lo = mid; // can be lighter
-        } else if ratio < target_ratio {
-            lo = mid; // need lighter bg
-        } else {
-            hi = mid; // can be darker
+    // Pick whichever is closest to the original bg
+    match (darker, lighter) {
+        (Some(d), Some(l)) => {
+            let d_dist = (srgb_to_oklab(d.0, d.1, d.2).l - bg_lab.l).abs();
+            let l_dist = (srgb_to_oklab(l.0, l.1, l.2).l - bg_lab.l).abs();
+            Some(if d_dist <= l_dist { d } else { l })
         }
-    }
-
-    let result_l = if fg_is_lighter { lo } else { hi };
-    let result = Oklab { l: result_l, ..bg_lab };
-    let rgb = oklab_to_srgb(result);
-
-    if contrast_ratio(fg, rgb) >= target_ratio {
-        Some(rgb)
-    } else {
-        None
+        (Some(d), None) => Some(d),
+        (None, Some(l)) => Some(l),
+        (None, None) => None,
     }
 }
 

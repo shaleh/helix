@@ -155,8 +155,14 @@ impl Loader {
     /// Load the fully merged TOML value for a theme, resolving inheritance.
     /// Useful for tools that need to inspect the raw theme data.
     pub fn load_merged_toml(&self, name: &str) -> Result<Value> {
-        let mut visited_paths = HashSet::new();
-        self.load_theme(name, &mut visited_paths)
+        match name {
+            "default" => Ok(DEFAULT_THEME_DATA.clone()),
+            "base16_default" => Ok(BASE16_DEFAULT_THEME_DATA.clone()),
+            _ => {
+                let mut visited_paths = HashSet::new();
+                self.load_theme(name, &mut visited_paths)
+            }
+        }
     }
 
     /// Recursively load a theme, merging with any inherited parent themes.
