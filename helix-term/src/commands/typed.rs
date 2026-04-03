@@ -1221,6 +1221,70 @@ fn theme_check(
     Ok(())
 }
 
+fn theme_accessibility(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    use helix_view::accessibility::{AccessibilityReport, ScopeContrast};
+    use helix_view::theme::ScopeCategory;
+    use tui::widgets::Cell;
+
+    let report = AccessibilityReport::analyze(&cx.editor.theme);
+
+    cx.editor.set_status(format!(
+        "Theme '{}': {:.0}% AA, {:.0}% AAA ({} pass, {} fail, {} unknown)",
+        report.theme_name,
+        report.aa_percent(),
+        report.aaa_percent(),
+        report.pass_aaa + report.pass_aa,
+        report.fail,
+        report.unknown,
+    ));
+
+    let items = report.scopes;
+
+    let columns = vec![
+        ui::PickerColumn::new("level", |item: &ScopeContrast, _: &()| {
+            Cell::from(item.level_label)
+        }),
+        ui::PickerColumn::new("ratio", |item: &ScopeContrast, _: &()| {
+            match item.result.ratio() {
+                Some(ratio) => Cell::from(format!("{ratio:.1}:1")),
+                None => Cell::from("\u{2014}"),
+            }
+        }),
+        ui::PickerColumn::new("scope", |item: &ScopeContrast, _: &()| {
+            Cell::from(item.name)
+        }),
+        ui::PickerColumn::new("category", |item: &ScopeContrast, _: &()| {
+            let label = match item.category {
+                ScopeCategory::Syntax => "Syntax",
+                ScopeCategory::Interface => "Interface",
+            };
+            Cell::from(label)
+        }),
+    ];
+
+    let callback = async move {
+        let call: job::Callback = job::Callback::EditorCompositor(Box::new(
+            move |_editor: &mut Editor, compositor: &mut Compositor| {
+                let picker =
+                    ui::Picker::new(columns, 2, items, (), |_cx, _item, _action| {});
+                compositor.push(Box::new(overlaid(picker)));
+            },
+        ));
+        Ok(call)
+    };
+    cx.jobs.callback(callback);
+
+    Ok(())
+}
+
 fn yank_main_selection_to_clipboard(
     cx: &mut compositor::Context,
     _args: Args,
@@ -3453,6 +3517,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &[],
         doc: "Check the current theme for missing important scopes.",
         fun: theme_check,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "theme-accessibility",
+        aliases: &["theme-a11y"],
+        doc: "Check theme color contrast against WCAG accessibility standards.",
+        fun: theme_accessibility,
         completer: CommandCompleter::none(),
         signature: Signature {
             positionals: (0, Some(0)),

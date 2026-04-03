@@ -36,6 +36,7 @@
 | `:theme` | Change the editor theme (show current theme if no name specified). |
 | `:theme-preview` | Preview all theme scopes with their current styling. |
 | `:theme-check` | Check the current theme for missing important scopes. |
+| `:theme-accessibility`, `:theme-a11y` | Check theme color contrast against WCAG accessibility standards. |
 | `:yank-join` | Yank joined selections. A separator can be provided as first argument. Default value is newline. |
 | `:clipboard-yank` | Yank main selection into system clipboard. |
 | `:clipboard-yank-join` | Yank joined selections into system clipboard. A separator can be provided as first argument. Default value is newline. |

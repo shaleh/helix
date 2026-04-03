@@ -386,5 +386,16 @@ The following commands help when creating or debugging themes:
 - `:theme-check` — Prints a summary of how many scopes are defined, inherited,
   or missing in the current theme.
 
+- `:theme-accessibility` (or `:theme-a11y`) — Opens a picker showing the
+  [WCAG 2.1](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html)
+  contrast ratio for each scope's foreground color against its effective
+  background. Each scope is labeled with its conformance level: AAA (≥ 7:1),
+  AA (≥ 4.5:1), or FAIL. For themes using ANSI terminal colors, ratios are
+  estimated using standard xterm defaults and marked with a `~` prefix.
+  Use the search field to filter by "FAIL" to find scopes that need attention.
+
+The `cargo xtask theme-check` command also reports accessibility scores
+alongside scope coverage for all bundled themes.
+
 [editor-section]: ./configuration.md#editor-section
 [#2380]: https://github.com/helix-editor/helix/issues/2380

@@ -122,6 +122,21 @@ async fn theme_check_reports_status() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn theme_accessibility_opens() -> anyhow::Result<()> {
+    test_key_sequence(
+        &mut AppBuilder::new().build()?,
+        Some(":theme-accessibility<ret>"),
+        Some(&|app| {
+            assert!(!app.editor.is_err());
+        }),
+        false,
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn theme_preview_opens() -> anyhow::Result<()> {
     test_key_sequence(
         &mut AppBuilder::new().build()?,

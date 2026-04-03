@@ -126,7 +126,7 @@ pub mod tasks {
 
             let missing_optional = report.total - report.covered - report.missing_essential.len();
             println!(
-                "{:>3}/{} {} ({} optional scopes missing)",
+                "{:>3}/{} {} ({} optional missing)",
                 report.covered, report.total, report.name, missing_optional,
             );
         }
@@ -140,6 +140,74 @@ pub mod tasks {
         }
     }
 
+    pub fn theme_check_accessibility(
+        themes: impl Iterator<Item = String>,
+    ) -> Result<(), DynError> {
+        use helix_view::accessibility::AccessibilityReport;
+        use helix_view::theme::Loader;
+
+        let themes_to_check: HashSet<_> = themes.collect();
+
+        let theme_names = [
+            vec!["default".to_string(), "base16_default".to_string()],
+            Loader::read_names(&crate::path::themes()),
+        ]
+        .concat();
+        let loader = Loader::new(&[crate::path::runtime()]);
+
+        struct A11yReport {
+            name: String,
+            aa_percent: f64,
+            aaa_percent: f64,
+            pass: usize,
+            fail: usize,
+            unknown: usize,
+        }
+
+        let mut reports = Vec::new();
+
+        for name in theme_names {
+            if !themes_to_check.is_empty() && !themes_to_check.contains(&name) {
+                continue;
+            }
+
+            let (theme, _) = loader.load_with_warnings(&name).unwrap();
+            let a11y = AccessibilityReport::analyze(&theme);
+
+            reports.push(A11yReport {
+                name,
+                aa_percent: a11y.aa_percent(),
+                aaa_percent: a11y.aaa_percent(),
+                pass: a11y.pass_aaa + a11y.pass_aa,
+                fail: a11y.fail,
+                unknown: a11y.unknown,
+            });
+        }
+
+        // Sort by AA percentage descending, then name ascending.
+        reports.sort_by(|a, b| {
+            b.aa_percent
+                .partial_cmp(&a.aa_percent)
+                .unwrap()
+                .then(a.name.cmp(&b.name))
+        });
+
+        for report in &reports {
+            println!(
+                "{:>3}% AA  {:>3}% AAA  {} ({} pass, {} fail, {} unknown)",
+                report.aa_percent as u32,
+                report.aaa_percent as u32,
+                report.name,
+                report.pass,
+                report.fail,
+                report.unknown,
+            );
+        }
+
+        println!("Accessibility check complete.");
+        Ok(())
+    }
+
     pub fn print_help() {
         println!(
             "
@@ -151,6 +219,9 @@ Usage: Run with `cargo xtask <task>`, eg. `cargo xtask docgen`.
                                    languages, or all languages if none are specified.
         theme-check [themes]       Check that the theme files in runtime/themes/ are valid for the
                                    given themes, or all themes if none are specified.
+        theme-check-accessibility [themes]
+                                   Check WCAG color contrast accessibility for themes,
+                                   sorted by AA compliance percentage.
 "
         );
     }
@@ -165,6 +236,7 @@ fn main() -> Result<(), DynError> {
             "docgen" => tasks::docgen()?,
             "query-check" => tasks::querycheck(args)?,
             "theme-check" => tasks::themecheck(args)?,
+            "theme-check-accessibility" => tasks::theme_check_accessibility(args)?,
             invalid => return Err(format!("Invalid task name: {}", invalid).into()),
         },
     };
