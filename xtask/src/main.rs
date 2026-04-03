@@ -46,7 +46,7 @@ pub mod tasks {
     }
 
     pub fn themecheck(themes: impl Iterator<Item = String>) -> Result<(), DynError> {
-        use helix_view::theme::Loader;
+        use helix_view::theme::{Loader, DOCUMENTED_SCOPES};
 
         let themes_to_check: HashSet<_> = themes.collect();
 
@@ -58,20 +58,77 @@ pub mod tasks {
         let loader = Loader::new(&[crate::path::runtime()]);
         let mut errors_present = false;
 
+        struct ThemeReport {
+            name: String,
+            covered: usize,
+            total: usize,
+            load_errors: Vec<String>,
+            missing_essential: Vec<&'static str>,
+        }
+
+        let mut reports = Vec::new();
+
         for name in theme_names {
             if !themes_to_check.is_empty() && !themes_to_check.contains(&name) {
                 continue;
             }
 
-            let (_, warnings) = loader.load_with_warnings(&name).unwrap();
+            let (theme, warnings) = loader.load_with_warnings(&name).unwrap();
 
             if !warnings.is_empty() {
                 errors_present = true;
-                println!("Theme '{name}' loaded with errors:");
-                for warning in warnings {
-                    println!("\t* {}", warning);
+            }
+
+            // Check scope coverage — use try_get (with fallback) so
+            // inherited and dot-fallback scopes count as covered.
+            let mut missing_essential = Vec::new();
+            let mut missing_count = 0usize;
+
+            for scope in DOCUMENTED_SCOPES {
+                if theme.try_get(scope.name).is_none() {
+                    missing_count += 1;
+                    if scope.essential {
+                        missing_essential.push(scope.name);
+                    }
                 }
             }
+
+            if !missing_essential.is_empty() {
+                errors_present = true;
+            }
+
+            reports.push(ThemeReport {
+                name,
+                covered: DOCUMENTED_SCOPES.len() - missing_count,
+                total: DOCUMENTED_SCOPES.len(),
+                load_errors: warnings,
+                missing_essential,
+            });
+        }
+
+        // Sort by coverage descending, then name ascending.
+        reports.sort_by(|a, b| b.covered.cmp(&a.covered).then(a.name.cmp(&b.name)));
+
+        for report in &reports {
+            if !report.load_errors.is_empty() {
+                println!("Theme '{}' loaded with errors:", report.name);
+                for warning in &report.load_errors {
+                    println!("\t* {warning}");
+                }
+            }
+
+            if !report.missing_essential.is_empty() {
+                println!("Theme '{}' is missing essential scopes:", report.name);
+                for scope in &report.missing_essential {
+                    println!("\t! {scope}");
+                }
+            }
+
+            let missing_optional = report.total - report.covered - report.missing_essential.len();
+            println!(
+                "{:>3}/{} {} ({} optional scopes missing)",
+                report.covered, report.total, report.name, missing_optional,
+            );
         }
 
         match errors_present {
