@@ -200,17 +200,86 @@ fn effective_bg_scope(scope: &str) -> &str {
     }
 }
 
+/// Why a scope's contrast could not be computed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnknownReason {
+    /// The scope has no foreground color (uses terminal default or only modifiers).
+    NoForeground,
+    /// The scope has no background color and ui.background has none either.
+    NoBackground,
+    /// Both fg and bg are missing.
+    NeitherColor,
+    /// A color uses `Color::Reset` (terminal default).
+    TerminalDefault,
+}
+
+impl UnknownReason {
+    pub fn label(self) -> &'static str {
+        match self {
+            UnknownReason::NoForeground => "no foreground color set",
+            UnknownReason::NoBackground => "no background color resolved",
+            UnknownReason::NeitherColor => "no colors set (scope not defined)",
+            UnknownReason::TerminalDefault => "uses terminal default color",
+        }
+    }
+
+    pub fn recommendation(self) -> &'static str {
+        match self {
+            UnknownReason::NoForeground => "Add an explicit fg color to this scope or its parent.",
+            UnknownReason::NoBackground => "Add a bg color to ui.background.",
+            UnknownReason::NeitherColor => "Define this scope in the theme, or ensure a parent scope has a fg color.",
+            UnknownReason::TerminalDefault => "Replace 'default' or terminal-dependent colors with explicit hex values (e.g., #rrggbb).",
+        }
+    }
+}
+
 /// Resolve the effective (fg, bg) color pair for a scope in a theme.
+/// When the scope's style lacks a fg, falls back to `ui.text` fg.
 /// When the scope's style lacks a bg, falls back to the appropriate
 /// context scope (e.g., `ui.background` for most scopes).
 pub fn resolve_contrast_pair(theme: &Theme, scope: &str) -> (Option<Color>, Option<Color>) {
     let style = theme.get(scope);
-    let fg = style.fg;
+    let fg = style.fg.or_else(|| {
+        // Fall back to ui.text fg — that's what most text actually renders with.
+        theme.try_get("ui.text").and_then(|s| s.fg)
+    });
     let bg = style.bg.or_else(|| {
         let bg_scope = effective_bg_scope(scope);
         theme.try_get(bg_scope).and_then(|s| s.bg)
     });
     (fg, bg)
+}
+
+/// Determine why a scope's contrast is unknown.
+pub fn unknown_reason(theme: &Theme, scope: &str) -> UnknownReason {
+    let style = theme.get(scope);
+    let has_fg = style.fg.is_some()
+        || theme.try_get("ui.text").and_then(|s| s.fg).is_some();
+    let has_bg = style.bg.is_some()
+        || theme
+            .try_get(effective_bg_scope(scope))
+            .and_then(|s| s.bg)
+            .is_some();
+
+    // Check if resolved colors are Color::Reset
+    let (fg, bg) = resolve_contrast_pair(theme, scope);
+    if let Some(fg_color) = fg {
+        if matches!(resolve_color(fg_color), ResolvedColor::Unknown) {
+            return UnknownReason::TerminalDefault;
+        }
+    }
+    if let Some(bg_color) = bg {
+        if matches!(resolve_color(bg_color), ResolvedColor::Unknown) {
+            return UnknownReason::TerminalDefault;
+        }
+    }
+
+    match (has_fg, has_bg) {
+        (false, false) => UnknownReason::NeitherColor,
+        (false, true) => UnknownReason::NoForeground,
+        (true, false) => UnknownReason::NoBackground,
+        (true, true) => UnknownReason::TerminalDefault, // Both resolved but to Reset
+    }
 }
 
 /// Accessibility analysis for a single scope.
@@ -321,6 +390,338 @@ impl AccessibilityReport {
     }
 }
 
+// ── Readability tiers ──────────────────────────────────────────────
+
+/// Human-readable description of a contrast ratio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Readability {
+    EasyToRead,
+    Readable,
+    HardToRead,
+    VeryHardToRead,
+    NearlyInvisible,
+}
+
+impl Readability {
+    pub fn from_ratio(ratio: f64) -> Self {
+        if ratio >= 7.0 {
+            Readability::EasyToRead
+        } else if ratio >= 4.5 {
+            Readability::Readable
+        } else if ratio >= 3.0 {
+            Readability::HardToRead
+        } else if ratio >= 1.5 {
+            Readability::VeryHardToRead
+        } else {
+            Readability::NearlyInvisible
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Readability::EasyToRead => "easy to read",
+            Readability::Readable => "readable",
+            Readability::HardToRead => "hard to read",
+            Readability::VeryHardToRead => "very hard to read",
+            Readability::NearlyInvisible => "nearly invisible",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Readability::EasyToRead => "Comfortable for everyone including users with low vision.",
+            Readability::Readable => "Meets the minimum accessibility standard. Most users will be fine.",
+            Readability::HardToRead => "Many users will struggle, especially on lower-quality displays or in bright rooms.",
+            Readability::VeryHardToRead => "Most users will have difficulty reading this text.",
+            Readability::NearlyInvisible => "These colors are almost the same. Text will be extremely hard to see.",
+        }
+    }
+}
+
+// ── OKLAB color space ──────────────────────────────────────────────
+
+/// A color in the OKLAB perceptual color space.
+#[derive(Debug, Clone, Copy)]
+pub struct Oklab {
+    /// Lightness (0.0 = black, 1.0 = white).
+    pub l: f64,
+    /// Green-red axis.
+    pub a: f64,
+    /// Blue-yellow axis.
+    pub b: f64,
+}
+
+/// Convert linear RGB (0.0–1.0 per channel) to OKLAB.
+fn linear_rgb_to_oklab(r: f64, g: f64, b: f64) -> Oklab {
+    let l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+    let m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+    let s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+
+    let l_ = l.cbrt();
+    let m_ = m.cbrt();
+    let s_ = s.cbrt();
+
+    Oklab {
+        l: 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        a: 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        b: 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+    }
+}
+
+/// Convert OKLAB to linear RGB (0.0–1.0 per channel).
+fn oklab_to_linear_rgb(lab: Oklab) -> (f64, f64, f64) {
+    let l_ = lab.l + 0.3963377774 * lab.a + 0.2158037573 * lab.b;
+    let m_ = lab.l - 0.1055613458 * lab.a - 0.0638541728 * lab.b;
+    let s_ = lab.l - 0.0894841775 * lab.a - 1.2914855480 * lab.b;
+
+    let l = l_ * l_ * l_;
+    let m = m_ * m_ * m_;
+    let s = s_ * s_ * s_;
+
+    let r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+    let g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+    let b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+
+    (r, g, b)
+}
+
+/// Convert linear light value to sRGB (0–255).
+fn linear_to_srgb(v: f64) -> u8 {
+    let clamped = v.clamp(0.0, 1.0);
+    let srgb = if clamped <= 0.0031308 {
+        12.92 * clamped
+    } else {
+        1.055 * clamped.powf(1.0 / 2.4) - 0.055
+    };
+    (srgb * 255.0 + 0.5) as u8
+}
+
+/// Convert sRGB (0–255) to OKLAB.
+pub fn srgb_to_oklab(r: u8, g: u8, b: u8) -> Oklab {
+    linear_rgb_to_oklab(srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b))
+}
+
+/// Convert OKLAB to sRGB (0–255), clamping out-of-gamut values.
+pub fn oklab_to_srgb(lab: Oklab) -> (u8, u8, u8) {
+    let (r, g, b) = oklab_to_linear_rgb(lab);
+    (linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b))
+}
+
+// ── Color suggestions ──────────────────────────────────────────────
+
+/// Which color was adjusted in a suggestion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdjustTarget {
+    Foreground,
+    Background,
+}
+
+/// A suggested color adjustment to improve contrast.
+#[derive(Debug, Clone, Copy)]
+pub struct ColorSuggestion {
+    pub target: AdjustTarget,
+    pub original: (u8, u8, u8),
+    pub suggested: (u8, u8, u8),
+    pub original_ratio: f64,
+    pub suggested_ratio: f64,
+    pub target_level: WcagLevel,
+}
+
+/// Find the minimum OKLAB lightness adjustment to reach a target contrast
+/// ratio against a fixed background color. Preserves hue and chroma.
+///
+/// Returns `None` if the target cannot be reached (e.g., both colors
+/// are at the extreme of the lightness range).
+pub fn suggest_lightness_fix(
+    fg: (u8, u8, u8),
+    bg: (u8, u8, u8),
+    target_ratio: f64,
+) -> Option<(u8, u8, u8)> {
+    let bg_lum = relative_luminance(bg.0, bg.1, bg.2);
+    let fg_lab = srgb_to_oklab(fg.0, fg.1, fg.2);
+
+    // Determine direction: lighten fg if bg is dark, darken if bg is light.
+    let bg_is_dark = bg_lum < 0.5;
+
+    // Binary search for the minimum lightness change.
+    let (mut lo, mut hi) = if bg_is_dark {
+        (fg_lab.l, 1.0) // search lighter
+    } else {
+        (0.0, fg_lab.l) // search darker
+    };
+
+    // Check if the target is reachable at the extreme.
+    let extreme = Oklab { l: if bg_is_dark { hi } else { lo }, ..fg_lab };
+    let extreme_rgb = oklab_to_srgb(extreme);
+    let extreme_ratio = contrast_ratio(extreme_rgb, bg);
+    if extreme_ratio < target_ratio {
+        return None; // Target unreachable even at max/min lightness.
+    }
+
+    for _ in 0..32 {
+        let mid = (lo + hi) / 2.0;
+        let candidate = Oklab { l: mid, ..fg_lab };
+        let rgb = oklab_to_srgb(candidate);
+        let ratio = contrast_ratio(rgb, bg);
+
+        if bg_is_dark && ratio < target_ratio {
+            lo = mid; // need lighter
+        } else if bg_is_dark {
+            hi = mid; // can be darker
+        } else if ratio < target_ratio {
+            hi = mid; // need darker
+        } else {
+            lo = mid; // can be lighter
+        }
+    }
+
+    let result_l = if bg_is_dark { hi } else { lo };
+    let result = Oklab { l: result_l, ..fg_lab };
+    let rgb = oklab_to_srgb(result);
+
+    // Verify the suggestion actually meets the target.
+    if contrast_ratio(rgb, bg) >= target_ratio {
+        Some(rgb)
+    } else {
+        None
+    }
+}
+
+/// Find the minimum OKLAB lightness adjustment to a background color
+/// to reach a target contrast ratio against a fixed foreground.
+/// This is the inverse of `suggest_lightness_fix` — adjusts bg instead of fg.
+pub fn suggest_bg_lightness_fix(
+    fg: (u8, u8, u8),
+    bg: (u8, u8, u8),
+    target_ratio: f64,
+) -> Option<(u8, u8, u8)> {
+    let fg_lum = relative_luminance(fg.0, fg.1, fg.2);
+    let bg_lum = relative_luminance(bg.0, bg.1, bg.2);
+    let bg_lab = srgb_to_oklab(bg.0, bg.1, bg.2);
+
+    // Move bg away from fg: darken bg if fg is lighter, lighten bg if fg is darker.
+    let fg_is_lighter = fg_lum > bg_lum;
+
+    let (mut lo, mut hi) = if fg_is_lighter {
+        (0.0, bg_lab.l) // darken bg
+    } else {
+        (bg_lab.l, 1.0) // lighten bg
+    };
+
+    let extreme = Oklab { l: if fg_is_lighter { lo } else { hi }, ..bg_lab };
+    let extreme_rgb = oklab_to_srgb(extreme);
+    let extreme_ratio = contrast_ratio(fg, extreme_rgb);
+    if extreme_ratio < target_ratio {
+        return None;
+    }
+
+    for _ in 0..32 {
+        let mid = (lo + hi) / 2.0;
+        let candidate = Oklab { l: mid, ..bg_lab };
+        let rgb = oklab_to_srgb(candidate);
+        let ratio = contrast_ratio(fg, rgb);
+
+        if fg_is_lighter && ratio < target_ratio {
+            hi = mid; // need darker bg
+        } else if fg_is_lighter {
+            lo = mid; // can be lighter
+        } else if ratio < target_ratio {
+            lo = mid; // need lighter bg
+        } else {
+            hi = mid; // can be darker
+        }
+    }
+
+    let result_l = if fg_is_lighter { lo } else { hi };
+    let result = Oklab { l: result_l, ..bg_lab };
+    let rgb = oklab_to_srgb(result);
+
+    if contrast_ratio(fg, rgb) >= target_ratio {
+        Some(rgb)
+    } else {
+        None
+    }
+}
+
+/// Generate suggestions for a failing fg/bg pair.
+/// Returns both foreground and background adjustment options at AA level.
+pub fn suggest_fixes(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> Vec<ColorSuggestion> {
+    let original_ratio = contrast_ratio(fg, bg);
+    let mut suggestions = Vec::new();
+
+    // Foreground adjustments
+    if original_ratio < 4.5 {
+        if let Some(suggested) = suggest_lightness_fix(fg, bg, 4.5) {
+            suggestions.push(ColorSuggestion {
+                target: AdjustTarget::Foreground,
+                original: fg,
+                suggested,
+                original_ratio,
+                suggested_ratio: contrast_ratio(suggested, bg),
+                target_level: WcagLevel::AA,
+            });
+        }
+    }
+    if original_ratio < 7.0 {
+        if let Some(suggested) = suggest_lightness_fix(fg, bg, 7.0) {
+            suggestions.push(ColorSuggestion {
+                target: AdjustTarget::Foreground,
+                original: fg,
+                suggested,
+                original_ratio,
+                suggested_ratio: contrast_ratio(suggested, bg),
+                target_level: WcagLevel::AAA,
+            });
+        }
+    }
+
+    // Background adjustments
+    if original_ratio < 4.5 {
+        if let Some(suggested) = suggest_bg_lightness_fix(fg, bg, 4.5) {
+            suggestions.push(ColorSuggestion {
+                target: AdjustTarget::Background,
+                original: bg,
+                suggested,
+                original_ratio,
+                suggested_ratio: contrast_ratio(fg, suggested),
+                target_level: WcagLevel::AA,
+            });
+        }
+    }
+    if original_ratio < 7.0 {
+        if let Some(suggested) = suggest_bg_lightness_fix(fg, bg, 7.0) {
+            suggestions.push(ColorSuggestion {
+                target: AdjustTarget::Background,
+                original: bg,
+                suggested,
+                original_ratio,
+                suggested_ratio: contrast_ratio(fg, suggested),
+                target_level: WcagLevel::AAA,
+            });
+        }
+    }
+
+    suggestions
+}
+
+/// Format an RGB color as a hex string.
+pub fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {
+    format!("#{:02X}{:02X}{:02X}", r, g, b)
+}
+
+/// ANSI true-color escape sequence for a colored block.
+pub fn ansi_fg_block(r: u8, g: u8, b: u8) -> String {
+    format!("\x1b[38;2;{r};{g};{b}m\u{2588}\u{2588}\x1b[0m")
+}
+
+/// ANSI true-color escape for text with fg on bg.
+pub fn ansi_colored_text(text: &str, fg: (u8, u8, u8), bg: (u8, u8, u8)) -> String {
+    format!(
+        "\x1b[38;2;{};{};{};48;2;{};{};{}m{}\x1b[0m",
+        fg.0, fg.1, fg.2, bg.0, bg.1, bg.2, text
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,5 +826,106 @@ mod tests {
             report.computable() > 0,
             "Default theme should have computable contrast pairs"
         );
+    }
+
+    #[test]
+    fn oklab_round_trip_white() {
+        let lab = srgb_to_oklab(255, 255, 255);
+        let (r, g, b) = oklab_to_srgb(lab);
+        assert_eq!((r, g, b), (255, 255, 255));
+    }
+
+    #[test]
+    fn oklab_round_trip_black() {
+        let lab = srgb_to_oklab(0, 0, 0);
+        let (r, g, b) = oklab_to_srgb(lab);
+        assert_eq!((r, g, b), (0, 0, 0));
+    }
+
+    #[test]
+    fn oklab_round_trip_color() {
+        let lab = srgb_to_oklab(100, 200, 50);
+        let (r, g, b) = oklab_to_srgb(lab);
+        // Allow ±1 for rounding
+        assert!((r as i16 - 100).abs() <= 1);
+        assert!((g as i16 - 200).abs() <= 1);
+        assert!((b as i16 - 50).abs() <= 1);
+    }
+
+    #[test]
+    fn suggest_fix_for_low_contrast() {
+        // Light gray on dark background — should suggest lighter fg
+        let fg = (100, 100, 100);
+        let bg = (30, 30, 30);
+        let ratio = contrast_ratio(fg, bg);
+        assert!(ratio < 4.5, "Test setup: should be below AA");
+
+        let suggestions = suggest_fixes(fg, bg);
+        assert!(!suggestions.is_empty(), "Should produce at least one suggestion");
+
+        let aa = &suggestions[0];
+        assert!(aa.suggested_ratio >= 4.5, "AA suggestion should meet 4.5:1");
+        assert_eq!(aa.target_level, WcagLevel::AA);
+    }
+
+    #[test]
+    fn suggest_fix_preserves_hue() {
+        // A distinctly colored fg
+        let fg = (180, 50, 50); // reddish
+        let bg = (20, 20, 20);
+
+        if let Some(suggested) = suggest_lightness_fix(fg, bg, 4.5) {
+            // The suggested color should still be reddish (r > g, r > b)
+            assert!(
+                suggested.0 > suggested.1 && suggested.0 > suggested.2,
+                "Suggested {:?} should preserve reddish hue",
+                suggested
+            );
+        }
+    }
+
+    #[test]
+    fn suggest_bg_fix_for_low_contrast() {
+        // Light fg on medium-dark bg
+        let fg = (136, 192, 208); // #88C0D0
+        let bg = (67, 76, 94);    // #434C5E
+        let ratio = contrast_ratio(fg, bg);
+        assert!(ratio < 4.5, "Test setup: ratio {ratio} should be below AA");
+
+        let result = suggest_bg_lightness_fix(fg, bg, 4.5);
+        assert!(
+            result.is_some(),
+            "Should be able to darken bg to reach AA, ratio was {ratio}"
+        );
+        if let Some(suggested) = result {
+            let new_ratio = contrast_ratio(fg, suggested);
+            assert!(
+                new_ratio >= 4.5,
+                "Suggested bg {:?} gives ratio {new_ratio}, should be >= 4.5",
+                suggested
+            );
+        }
+    }
+
+    #[test]
+    fn suggest_fixes_includes_both_fg_and_bg() {
+        let fg = (136, 192, 208); // light cyan
+        let bg = (67, 76, 94);    // medium dark
+        let suggestions = suggest_fixes(fg, bg);
+        let has_fg = suggestions.iter().any(|s| s.target == AdjustTarget::Foreground);
+        let has_bg = suggestions.iter().any(|s| s.target == AdjustTarget::Background);
+        assert!(has_fg, "Should have fg suggestions");
+        assert!(has_bg, "Should have bg suggestions, got: {:?}", suggestions);
+    }
+
+    #[test]
+    fn readability_tiers() {
+        assert_eq!(Readability::from_ratio(21.0), Readability::EasyToRead);
+        assert_eq!(Readability::from_ratio(7.0), Readability::EasyToRead);
+        assert_eq!(Readability::from_ratio(5.0), Readability::Readable);
+        assert_eq!(Readability::from_ratio(4.5), Readability::Readable);
+        assert_eq!(Readability::from_ratio(3.5), Readability::HardToRead);
+        assert_eq!(Readability::from_ratio(2.0), Readability::VeryHardToRead);
+        assert_eq!(Readability::from_ratio(1.2), Readability::NearlyInvisible);
     }
 }
