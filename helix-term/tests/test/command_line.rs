@@ -107,6 +107,21 @@ async fn shell_expansion() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn theme_preview_opens() -> anyhow::Result<()> {
+    test_key_sequence(
+        &mut AppBuilder::new().build()?,
+        Some(":theme-preview<ret>"),
+        Some(&|app| {
+            assert!(!app.editor.is_err());
+        }),
+        false,
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn register_expansion() -> anyhow::Result<()> {
     test_statusline(
         r#":set-register a hello world<ret>:echo %reg{a}"#,
