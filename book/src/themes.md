@@ -373,5 +373,15 @@ These scopes are used for theming the editor interface:
 | `diagnostic.deprecated`           | Diagnostics with deprecated tag (editing area)                                                 |
 | `tabstop`                         | Snippet placeholder                                                                            |
 
+### Theme development tools
+
+The following commands help when creating or debugging themes:
+
+- `:theme-preview` — Opens a picker showing every documented theme scope with
+  its current style. Each scope is rendered with its actual colors and
+  modifiers, along with a status indicator showing whether it is explicitly
+  defined, inherited via dot-fallback, or missing. Use the search field to
+  filter by scope name, category, or status.
+
 [editor-section]: ./configuration.md#editor-section
 [#2380]: https://github.com/helix-editor/helix/issues/2380

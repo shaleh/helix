@@ -14,8 +14,12 @@ use helix_stdx::path::home_dir;
 use helix_view::document::{read_to_string, DEFAULT_LANGUAGE_NAME};
 use helix_view::editor::{CloseError, ConfigEvent};
 use helix_view::expansion;
+use helix_view::theme::{ScopeCategory, ScopeStatus, DOCUMENTED_SCOPES};
 use serde_json::Value;
+use tui::text::Span;
+use tui::widgets::Cell;
 use ui::completers::{self, Completer};
+
 
 #[derive(Clone)]
 pub struct TypableCommand {
@@ -1058,6 +1062,114 @@ fn theme(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow
             }
         }
     };
+
+    Ok(())
+}
+
+fn theme_preview(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    struct PreviewItem {
+        name: &'static str,
+        category: ScopeCategory,
+        status: ScopeStatus,
+        description: &'static str,
+        sample: &'static str,
+        style: Style,
+        status_style: Style,
+    }
+
+    let theme = &cx.editor.theme;
+    let mut defined = 0u32;
+    let mut inherited = 0u32;
+    let mut missing = 0u32;
+
+    let info_style = theme.get("info");
+    let warning_style = theme.get("warning");
+    let error_style = theme.get("error");
+
+    let items: Vec<PreviewItem> = DOCUMENTED_SCOPES
+        .iter()
+        .map(|scope| {
+            let status = theme.scope_status(scope.name);
+            let (style, status_style) = match status {
+                ScopeStatus::Defined => {
+                    defined += 1;
+                    (theme.get(scope.name), info_style)
+                }
+                ScopeStatus::Inherited => {
+                    inherited += 1;
+                    (theme.get(scope.name), warning_style)
+                }
+                ScopeStatus::Missing => {
+                    missing += 1;
+                    (theme.get("ui.text.inactive"), error_style)
+                }
+            };
+
+            PreviewItem {
+                name: scope.name,
+                category: scope.category,
+                status,
+                description: scope.description,
+                sample: scope.sample,
+                style,
+                status_style,
+            }
+        })
+        .collect();
+
+    let total = DOCUMENTED_SCOPES.len();
+    let theme_name = theme.name().to_string();
+    cx.editor.set_status(format!(
+        "Theme '{}': {}/{} defined, {} inherited, {} missing",
+        theme_name, defined, total, inherited, missing,
+    ));
+
+    let columns = vec![
+        ui::PickerColumn::new("status", |item: &PreviewItem, _: &()| {
+            let label = match item.status {
+                ScopeStatus::Defined => "✓ Defined",
+                ScopeStatus::Inherited => "↑ Inherited",
+                ScopeStatus::Missing => "✗ Missing",
+            };
+            Cell::from(Span::styled(label, item.status_style))
+        }),
+        ui::PickerColumn::new("scope", |item: &PreviewItem, _: &()| {
+            Cell::from(Span::styled(item.name, item.style))
+        }),
+        ui::PickerColumn::new("sample", |item: &PreviewItem, _: &()| {
+            Cell::from(Span::styled(item.sample, item.style))
+        }),
+        ui::PickerColumn::new("category", |item: &PreviewItem, _: &()| {
+            let label = match item.category {
+                ScopeCategory::Syntax => "Syntax",
+                ScopeCategory::Interface => "Interface",
+            };
+            Cell::from(label)
+        }),
+        ui::PickerColumn::new("description", |item: &PreviewItem, _: &()| {
+            Cell::from(item.description)
+        }),
+    ];
+
+    let callback = async move {
+        let call: job::Callback = job::Callback::EditorCompositor(Box::new(
+            move |_editor: &mut Editor, compositor: &mut Compositor| {
+                let picker =
+                    ui::Picker::new(columns, 1, items, (), |_cx, _item, _action| {});
+                compositor.push(Box::new(overlaid(picker)));
+            },
+        ));
+        Ok(call)
+    };
+    cx.jobs.callback(callback);
 
     Ok(())
 }
@@ -3297,6 +3409,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         completer: CommandCompleter::positional(&[completers::theme]),
         signature: Signature {
             positionals: (0, Some(1)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "theme-preview",
+        aliases: &[],
+        doc: "Preview all theme scopes with their current styling.",
+        fun: theme_preview,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
             ..Signature::DEFAULT
         },
     },
