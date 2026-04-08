@@ -10,6 +10,8 @@
   deleting, and changing all update the history. But you can use the `_noyank` versions if you prefer. Personally, I have
   'd' and 'c' set to noyank and only actually yank with 'y'. But I have Alt-d and Alt-c defined when I need them. Alt+p
   and Alt+P are the same as normal paste but use the history picker.
+- theme-preview command. Show all of the system defined theme elements in a picker. Handy for to quickly explore themes. Or see how a theme renders a
+  specific element.
 - ghv command. This runs `ghv` from your path and passed the current filename and line number. ghv stands for "github view"
   and is intended to load the file from the current repo on GitHub. Useful to sending links to co-workers or contributors.
   Command is not included. My current version is quite simplistic: [ghv](https://github.com/shaleh/useful-things/blob/main/scripts/ghv)
