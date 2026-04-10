@@ -1203,7 +1203,9 @@ impl Document {
     ) -> Option<Arc<syntax::config::LanguageConfiguration>> {
         let language = loader
             .language_for_filename(self.path.as_ref()?)
-            .or_else(|| loader.language_for_shebang(self.text().slice(..)))?;
+            .or_else(|| loader.language_for_shebang(self.text().slice(..)))
+            // Fall back to "text" for files that don't match any language.
+            .or_else(|| loader.language_for_name("text"))?;
 
         Some(loader.language(language).config().clone())
     }
