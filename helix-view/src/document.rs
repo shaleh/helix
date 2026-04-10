@@ -1219,7 +1219,9 @@ impl Document {
                     .as_ref()
                     .and_then(|path| loader.language_for_filename(path))
             })
-            .or_else(|| loader.language_for_shebang(self.text().slice(..)))?;
+            .or_else(|| loader.language_for_shebang(self.text().slice(..)))
+            // Fall back to "text" for files that don't match any language.
+            .or_else(|| loader.language_for_name("text"))?;
 
         Some(loader.language(language).config().clone())
     }
