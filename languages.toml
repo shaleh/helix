@@ -319,6 +319,11 @@ args = ["server", "--stdio"]
 command = "drools-lsp"
 
 [[language]]
+name = "text"
+scope = "text.plain"
+file-types = ["txt", "text", { glob = "README" }, { glob = "INSTALL" }, { glob = "LICENSE" }, { glob = "COPYING" }]
+
+[[language]]
 name = "rust"
 scope = "source.rust"
 injection-regex = "rs|rust"
