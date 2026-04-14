@@ -13,7 +13,7 @@ use crate::lsp::{
 };
 use helix_core::{
     find_workspace,
-    syntax::config::{LanguageServerFeature, RootMarkers},
+    syntax::config::{LanguageServerFeature, PathMapping, RootMarkers},
     ChangeSet, Rope,
 };
 use helix_loader::VERSION_AND_GIT_HASH;
@@ -67,6 +67,7 @@ pub struct Client {
     initialize_notify: Arc<Notify>,
     /// workspace folders added while the server is still initializing
     req_timeout: u64,
+    path_mappings: Vec<PathMapping>,
 }
 
 impl Client {
@@ -215,6 +216,7 @@ impl Client {
         id: LanguageServerId,
         name: String,
         req_timeout: u64,
+        path_mappings: Vec<PathMapping>,
     ) -> Result<(
         Self,
         UnboundedReceiver<(LanguageServerId, Call)>,
@@ -243,7 +245,7 @@ impl Client {
         let stderr = BufReader::new(process.stderr.take().expect("Failed to open stderr"));
 
         let (server_rx, server_tx, initialize_notify) =
-            Transport::start(reader, writer, stderr, id, name.clone());
+            Transport::start(reader, writer, stderr, id, name.clone(), path_mappings.clone());
 
         let workspace_folders = root_uri
             .clone()
@@ -264,6 +266,7 @@ impl Client {
             root_uri,
             workspace_folders: Mutex::new(workspace_folders),
             initialize_notify: initialize_notify.clone(),
+            path_mappings,
         };
 
         Ok((client, server_rx, initialize_notify))
@@ -275,6 +278,10 @@ impl Client {
 
     pub fn id(&self) -> LanguageServerId {
         self.id
+    }
+
+    pub fn path_mappings(&self) -> &[PathMapping] {
+        &self.path_mappings
     }
 
     fn next_request_id(&self) -> jsonrpc::Id {
@@ -570,13 +577,33 @@ impl Client {
             log::info!("Using custom LSP config: {}", config);
         }
 
+        // Remap rootPath for containerized/remote LSP servers.
+        // rootPath is a plain string (not a file:// URI) so the transport-level
+        // URI rewriter can't handle it — this is the one explicit remap site.
+        let root_path = self.root_path.to_str().map(|path| {
+            let mut result = path.to_owned();
+            for mapping in &self.path_mappings {
+                let Some(local) = &mapping.local else {
+                    continue;
+                };
+                if let Some(remapped) =
+                    crate::remap::replace_path_prefix(&result, local, &mapping.remote)
+                {
+                    log::debug!("path remap rootPath: {result} -> {remapped}");
+                    result = remapped;
+                    break;
+                }
+            }
+            result
+        });
+
         #[allow(deprecated)]
         let params = lsp::InitializeParams {
             process_id: Some(std::process::id()),
             workspace_folders: Some(self.workspace_folders.lock().clone()),
             // root_path is obsolete, but some clients like pyright still use it so we specify both.
             // clients will prefer _uri if possible
-            root_path: self.root_path.to_str().map(|path| path.to_owned()),
+            root_path,
             root_uri: self.root_uri.clone(),
             initialization_options: self.config.clone(),
             capabilities: lsp::ClientCapabilities {
