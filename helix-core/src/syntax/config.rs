@@ -430,6 +430,16 @@ where
     serializer.end()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct PathMapping {
+    /// Local path prefix (editor side). When `None`, defaults to the LSP workspace root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<String>,
+    /// Remote path prefix (language server side).
+    pub remote: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct LanguageServerConfiguration {
@@ -445,6 +455,8 @@ pub struct LanguageServerConfiguration {
     pub timeout: u64,
     #[serde(default)]
     pub required_root_patterns: Option<GlobSet>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_mapping: Vec<PathMapping>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -649,4 +661,63 @@ where
 
 fn default_timeout() -> u64 {
     20
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_path_mapping_with_explicit_local() {
+        let toml = r#"
+            command = "rust-analyzer"
+            path-mapping = [{ local = "/home/user/project", remote = "/workspace/project" }]
+        "#;
+        let config: LanguageServerConfiguration = toml::from_str(toml).unwrap();
+        assert_eq!(config.path_mapping.len(), 1);
+        assert_eq!(
+            config.path_mapping[0].local.as_deref(),
+            Some("/home/user/project")
+        );
+        assert_eq!(config.path_mapping[0].remote, "/workspace/project");
+    }
+
+    #[test]
+    fn test_path_mapping_local_omitted() {
+        let toml = r#"
+            command = "rust-analyzer"
+            path-mapping = [{ remote = "/workspace" }]
+        "#;
+        let config: LanguageServerConfiguration = toml::from_str(toml).unwrap();
+        assert_eq!(config.path_mapping.len(), 1);
+        assert!(config.path_mapping[0].local.is_none());
+        assert_eq!(config.path_mapping[0].remote, "/workspace");
+    }
+
+    #[test]
+    fn test_path_mapping_mixed() {
+        let toml = r#"
+            command = "rust-analyzer"
+            path-mapping = [
+                { remote = "/workspace" },
+                { local = "/home/user/.cargo", remote = "/root/.cargo" },
+            ]
+        "#;
+        let config: LanguageServerConfiguration = toml::from_str(toml).unwrap();
+        assert_eq!(config.path_mapping.len(), 2);
+        assert!(config.path_mapping[0].local.is_none());
+        assert_eq!(config.path_mapping[0].remote, "/workspace");
+        assert_eq!(
+            config.path_mapping[1].local.as_deref(),
+            Some("/home/user/.cargo")
+        );
+        assert_eq!(config.path_mapping[1].remote, "/root/.cargo");
+    }
+
+    #[test]
+    fn test_path_mapping_absent() {
+        let toml = r#"command = "rust-analyzer""#;
+        let config: LanguageServerConfiguration = toml::from_str(toml).unwrap();
+        assert!(config.path_mapping.is_empty());
+    }
 }

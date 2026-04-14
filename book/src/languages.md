@@ -170,6 +170,7 @@ These are the available options for a language server.
 | `timeout`                  | The maximum time a request to the language server may take, in seconds. Defaults to `20`                                          |
 | `environment`              | Any environment variables that will be used when starting the language server `{ "KEY1" = "Value1", "KEY2" = "Value2" }`          |
 | `required-root-patterns`   | A list of `glob` patterns to look for in the working directory of the lsp. The language server is only started if at least one of them is found. |
+| `path-mapping`             | A list of path mappings for translating between local and remote file paths. Used when the language server runs in a container, over SSH, or in WSL. See [Path Mapping](#path-mapping) below. |
 
 A `format` sub-table within `config` can be used to pass extra formatting options to
 [Document Formatting Requests](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_formatting).
@@ -180,6 +181,55 @@ For example, with typescript:
 # pass format options according to https://github.com/typescript-language-server/typescript-language-server#workspacedidchangeconfiguration omitting the "[language].format." prefix.
 config = { format = { "semicolons" = "insert", "insertSpaceBeforeFunctionParenthesis" = true } }
 ```
+
+### Path Mapping
+
+When a language server runs in a different filesystem from the editor (e.g. inside a
+Docker container, over SSH, or in WSL), file paths sent between the editor and the
+server need to be translated. The `path-mapping` option handles this transparently.
+
+Each mapping specifies a `remote` path (where the language server sees files) and an
+optional `local` path (where the editor sees them). When `local` is omitted, it
+defaults to the project's workspace root — which is the common case. All `file://` URIs
+in LSP messages are rewritten automatically in both directions.
+
+```toml
+# Language server running in a Docker container.
+# local defaults to the project root, so only remote is needed.
+[language-server.pylsp]
+command = "docker"
+args = ["exec", "-i", "dev-container", "pylsp"]
+path-mapping = [{ remote = "/app" }]
+```
+
+You can specify `local` explicitly when it differs from the workspace root, or when
+mapping directories outside the project:
+
+```toml
+[language-server.rust-analyzer]
+command = "docker"
+args = ["exec", "-i", "dev-container", "rust-analyzer"]
+path-mapping = [
+    { remote = "/workspace" },
+    { local = "/home/user/.cargo", remote = "/root/.cargo" },
+]
+```
+
+WSL example (note the leading `/` on the Windows path — this matches how it appears in
+`file://` URIs):
+
+```toml
+[language-server.clangd]
+command = "wsl"
+args = ["clangd"]
+path-mapping = [{ local = "/C:/Users/sean/project", remote = "/mnt/c/Users/sean/project" }]
+```
+
+Path mappings are configured per language server. If multiple servers share the same
+container environment, each server needs its own `path-mapping` configuration. Using a
+project-local `.helix/languages.toml` avoids repeating this in your global config.
+
+Start Helix with `-vv` to enable debug logging and see path remap operations in the log file.
 
 ### Configuring Language Servers for a language
 
