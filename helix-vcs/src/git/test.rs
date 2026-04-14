@@ -3,6 +3,7 @@ use std::{fs::File, io::Write, path::Path, process::Command};
 use tempfile::TempDir;
 
 use crate::git;
+use crate::status::FileChange;
 
 fn exec_git_cmd(args: &str, git_dir: &Path) {
     let res = Command::new("git")
@@ -149,4 +150,58 @@ fn symlink_to_git_repo() {
 
     assert_eq!(git::get_diff_base(&file_link).unwrap(), contents);
     assert_eq!(git::get_diff_base(&file).unwrap(), contents);
+}
+
+#[test]
+fn conflict_detected_in_changed_files() {
+    let temp_git = empty_git_repo();
+    let repo = temp_git.path();
+    let file = repo.join("file.txt");
+
+    // Create initial commit on main
+    File::create(&file)
+        .unwrap()
+        .write_all(b"initial")
+        .unwrap();
+    create_commit(repo, true);
+
+    // Create a branch and modify the file
+    exec_git_cmd("checkout -b branch1", repo);
+    File::create(&file)
+        .unwrap()
+        .write_all(b"branch1 change")
+        .unwrap();
+    create_commit(repo, true);
+
+    // Go back to main and make a conflicting change
+    exec_git_cmd("checkout main", repo);
+    File::create(&file)
+        .unwrap()
+        .write_all(b"main change")
+        .unwrap();
+    create_commit(repo, true);
+
+    // Attempt merge — this should fail with a conflict
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["merge", "branch1"])
+        .output()
+        .expect("failed to run git merge");
+    assert!(
+        !output.status.success(),
+        "merge should fail due to conflict"
+    );
+
+    // Collect changed files and verify a conflict is reported
+    let found_conflict = std::cell::Cell::new(false);
+    git::for_each_changed_file(repo, |result| {
+        if let Ok(FileChange::Conflict { .. }) = result {
+            found_conflict.set(true);
+        }
+        true
+    })
+    .expect("for_each_changed_file should succeed");
+
+    assert!(found_conflict.get(), "should detect a conflicted file");
 }

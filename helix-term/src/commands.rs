@@ -3538,17 +3538,23 @@ fn changed_file_picker(cx: &mut Context) {
     )
     .with_preview(|_editor, meta| Some((meta.path().into(), None)));
     let injector = picker.injector();
+    let diff_providers = cx.editor.diff_providers.clone();
 
-    cx.editor
-        .diff_providers
-        .clone()
-        .for_each_changed_file(cwd, move |change| match change {
-            Ok(change) => injector.push(change).is_ok(),
+    tokio::task::spawn_blocking(move || {
+        match diff_providers.collect_changed_files(&cwd) {
+            Ok(mut files) => {
+                files.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+                for file in files {
+                    if injector.push(file).is_err() {
+                        break;
+                    }
+                }
+            }
             Err(err) => {
                 status::report_blocking(err);
-                true
             }
-        });
+        }
+    });
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
