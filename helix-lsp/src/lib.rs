@@ -2,6 +2,7 @@ mod client;
 pub mod file_event;
 mod file_operations;
 pub mod jsonrpc;
+pub mod remap;
 mod transport;
 
 use arc_swap::ArcSwap;
@@ -922,6 +923,20 @@ fn start_client(
         }
     }
 
+    // Resolve path mappings: fill in `local = None` with the workspace root path.
+    let path_mappings: Vec<_> = ls_config
+        .path_mapping
+        .iter()
+        .map(|m| helix_core::syntax::config::PathMapping {
+            local: Some(
+                m.local
+                    .clone()
+                    .unwrap_or_else(|| root_path.to_string_lossy().into_owned()),
+            ),
+            remote: m.remote.clone(),
+        })
+        .collect();
+
     let (client, incoming, initialize_notify) = Client::start(
         &ls_config.command,
         &ls_config.args,
@@ -932,6 +947,7 @@ fn start_client(
         id,
         name,
         ls_config.timeout,
+        path_mappings,
     )?;
 
     let client = Arc::new(client);
