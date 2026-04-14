@@ -1,9 +1,10 @@
 use crate::{
-    jsonrpc,
+    jsonrpc, remap,
     lsp::{self, notification::Notification as _},
     Error, LanguageServerId, Result,
 };
 use anyhow::Context;
+use helix_core::syntax::config::PathMapping;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +45,7 @@ pub struct Transport {
     id: LanguageServerId,
     name: String,
     pending_requests: Mutex<HashMap<jsonrpc::Id, Sender<Result<Value>>>>,
+    path_mappings: Vec<PathMapping>,
 }
 
 impl Transport {
@@ -53,6 +55,7 @@ impl Transport {
         server_stderr: BufReader<ChildStderr>,
         id: LanguageServerId,
         name: String,
+        path_mappings: Vec<PathMapping>,
     ) -> (
         UnboundedReceiver<(LanguageServerId, jsonrpc::Call)>,
         UnboundedSender<Payload>,
@@ -66,6 +69,7 @@ impl Transport {
             id,
             name,
             pending_requests: Mutex::new(HashMap::default()),
+            path_mappings,
         };
 
         let transport = Arc::new(transport);
@@ -157,11 +161,50 @@ impl Transport {
         Ok(())
     }
 
+    fn remap_params_outbound(params: &mut jsonrpc::Params, mappings: &[PathMapping]) {
+        match params {
+            jsonrpc::Params::Map(map) => {
+                let mut value = Value::Object(std::mem::take(map));
+                remap::remap_uris_in_value(&mut value, mappings, remap::Direction::ToRemote);
+                match value {
+                    Value::Object(new_map) => *map = new_map,
+                    _ => unreachable!("remap_uris_in_value changed Value variant"),
+                }
+            }
+            jsonrpc::Params::Array(arr) => {
+                for item in arr {
+                    remap::remap_uris_in_value(item, mappings, remap::Direction::ToRemote);
+                }
+            }
+            jsonrpc::Params::None => {}
+        }
+    }
+
     async fn send_payload_to_server(
         &self,
         server_stdin: &mut BufWriter<ChildStdin>,
-        payload: Payload,
+        mut payload: Payload,
     ) -> Result<()> {
+        if !self.path_mappings.is_empty() {
+            match &mut payload {
+                Payload::Request { value, .. } => {
+                    Self::remap_params_outbound(&mut value.params, &self.path_mappings);
+                }
+                Payload::Notification(notif) => {
+                    Self::remap_params_outbound(&mut notif.params, &self.path_mappings);
+                }
+                Payload::Response(output) => {
+                    if let jsonrpc::Output::Success(success) = output {
+                        remap::remap_uris_in_value(
+                            &mut success.result,
+                            &self.path_mappings,
+                            remap::Direction::ToRemote,
+                        );
+                    }
+                }
+            }
+        }
+
         //TODO: reuse string
         let json = match payload {
             Payload::Request { chan, value } => {
@@ -199,12 +242,54 @@ impl Transport {
         Ok(())
     }
 
+    fn remap_params_inbound(params: &mut jsonrpc::Params, mappings: &[PathMapping]) {
+        match params {
+            jsonrpc::Params::Map(map) => {
+                let mut value = Value::Object(std::mem::take(map));
+                remap::remap_uris_in_value(&mut value, mappings, remap::Direction::ToLocal);
+                match value {
+                    Value::Object(new_map) => *map = new_map,
+                    _ => unreachable!("remap_uris_in_value changed Value variant"),
+                }
+            }
+            jsonrpc::Params::Array(arr) => {
+                for item in arr {
+                    remap::remap_uris_in_value(item, mappings, remap::Direction::ToLocal);
+                }
+            }
+            jsonrpc::Params::None => {}
+        }
+    }
+
     async fn process_server_message(
         &self,
         client_tx: &UnboundedSender<(LanguageServerId, jsonrpc::Call)>,
-        msg: ServerMessage,
+        mut msg: ServerMessage,
         language_server_name: &str,
     ) -> Result<()> {
+        if !self.path_mappings.is_empty() {
+            match &mut msg {
+                ServerMessage::Output(output) => {
+                    if let jsonrpc::Output::Success(success) = output {
+                        remap::remap_uris_in_value(
+                            &mut success.result,
+                            &self.path_mappings,
+                            remap::Direction::ToLocal,
+                        );
+                    }
+                }
+                ServerMessage::Call(call) => match call {
+                    jsonrpc::Call::MethodCall(mc) => {
+                        Self::remap_params_inbound(&mut mc.params, &self.path_mappings);
+                    }
+                    jsonrpc::Call::Notification(notif) => {
+                        Self::remap_params_inbound(&mut notif.params, &self.path_mappings);
+                    }
+                    jsonrpc::Call::Invalid { .. } => {}
+                },
+            }
+        }
+
         match msg {
             ServerMessage::Output(output) => {
                 self.process_request_response(output, language_server_name)
