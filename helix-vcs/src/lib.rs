@@ -5,6 +5,7 @@
 use anyhow::{anyhow, bail, Result};
 use arc_swap::ArcSwap;
 use std::{
+    cell::RefCell,
     path::{Path, PathBuf},
     sync::Arc,
 };
