@@ -17,7 +17,7 @@ use gix::status::{
 };
 use gix::{Commit, ObjectId, Repository, ThreadSafeRepository};
 
-use crate::blame::{BlameResult, LineBlame};
+use crate::blame::BlameResult;
 use crate::FileChange;
 
 #[cfg(test)]
@@ -221,9 +221,7 @@ pub fn get_blame(file: &Path) -> Result<BlameResult> {
         gix::repository::blame_file::Options::default(),
     )?;
 
-    // Count total lines from entries
-    let total_lines: u32 = outcome.entries.iter().map(|e| e.len.get()).sum();
-    let mut lines = Vec::with_capacity(total_lines as usize);
+    let mut result = BlameResult::new();
 
     // Cache commit lookups — many entries share the same commit_id.
     let mut commit_cache: std::collections::HashMap<ObjectId, (String, i64)> =
@@ -243,15 +241,10 @@ pub fn get_blame(file: &Path) -> Result<BlameResult> {
             }
         };
 
-        for _ in 0..entry.len.get() {
-            lines.push(LineBlame {
-                short_hash: short_hash.clone(),
-                timestamp,
-            });
-        }
+        result.push(entry.start_in_blamed_file, entry.len.get(), short_hash, timestamp);
     }
 
-    Ok(BlameResult { lines })
+    Ok(result)
 }
 
 /// Finds the object that contains the contents of a file at a specific commit.

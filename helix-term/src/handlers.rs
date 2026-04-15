@@ -16,6 +16,7 @@ use self::document_colors::DocumentColorsHandler;
 use self::document_links::DocumentLinksHandler;
 
 mod auto_save;
+mod blame;
 pub mod completion;
 pub mod diagnostics;
 mod document_colors;
@@ -56,6 +57,7 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
     auto_save::register_hooks(&handlers);
     diagnostics::register_hooks(&handlers);
     snippet::register_hooks(&handlers);
+    blame::register_hooks(&handlers);
     document_colors::register_hooks(&handlers);
     document_links::register_hooks(&handlers);
     prompt::register_hooks(&handlers);

@@ -1953,10 +1953,6 @@ impl Editor {
             }
             doc.set_version_control_head(self.diff_providers.get_current_head_name(&path));
 
-            if let Some(blame) = self.diff_providers.get_blame(&path) {
-                doc.set_blame(blame);
-            }
-
             let id = self.new_document(doc);
             self.launch_language_servers(id);
 
