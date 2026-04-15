@@ -32,6 +32,7 @@ impl GutterType {
             GutterType::LineNumbers => line_numbers(editor, doc, view, theme, is_focused),
             GutterType::Spacer => padding(editor, doc, view, theme, is_focused),
             GutterType::Diff => diff(editor, doc, view, theme, is_focused),
+            GutterType::Blame => blame(editor, doc, view, theme, is_focused),
         }
     }
 
@@ -41,6 +42,7 @@ impl GutterType {
             GutterType::LineNumbers => line_numbers_width(view, doc),
             GutterType::Spacer => 1,
             GutterType::Diff => 1,
+            GutterType::Blame => 11, // "abc1234 3d " = 7 hash + space + 2-3 age + space
         }
     }
 }
@@ -131,6 +133,88 @@ pub fn diff<'doc>(
                 };
 
                 write!(out, "{}", icon).unwrap();
+                Some(style)
+            },
+        )
+    } else {
+        Box::new(move |_, _, _, _| None)
+    }
+}
+
+fn format_age(timestamp: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let age_secs = now.saturating_sub(timestamp);
+
+    const HOUR: i64 = 3600;
+    const DAY: i64 = 86400;
+    const WEEK: i64 = 7 * DAY;
+    const MONTH: i64 = 30 * DAY;
+    const YEAR: i64 = 365 * DAY;
+
+    if age_secs < HOUR {
+        format!("{}m", (age_secs / 60).max(1))
+    } else if age_secs < DAY {
+        format!("{}h", age_secs / HOUR)
+    } else if age_secs < WEEK {
+        format!("{}d", age_secs / DAY)
+    } else if age_secs < MONTH {
+        format!("{}w", age_secs / WEEK)
+    } else if age_secs < YEAR {
+        format!("{}M", age_secs / MONTH)
+    } else {
+        format!("{}y", age_secs / YEAR)
+    }
+}
+
+/// Returns an age "bucket" for theme selection: 0 = recent, 1 = mid, 2 = old.
+fn age_bucket(timestamp: i64) -> u8 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let age_secs = now.saturating_sub(timestamp);
+
+    const WEEK: i64 = 7 * 86400;
+    const YEAR: i64 = 365 * 86400;
+
+    if age_secs < WEEK {
+        0
+    } else if age_secs < YEAR {
+        1
+    } else {
+        2
+    }
+}
+
+pub fn blame<'doc>(
+    _editor: &'doc Editor,
+    doc: &'doc Document,
+    _view: &View,
+    theme: &Theme,
+    _is_focused: bool,
+) -> GutterFn<'doc> {
+    let blame_recent = theme.try_get("ui.gutter.blame.recent").unwrap_or_else(|| theme.get("ui.gutter"));
+    let blame_mid = theme.try_get("ui.gutter.blame").unwrap_or_else(|| theme.get("ui.gutter"));
+    let blame_old = theme.try_get("ui.gutter.blame.old").unwrap_or_else(|| theme.get("ui.gutter"));
+
+    if let Some(blame_data) = doc.blame() {
+        let lines = &blame_data.lines;
+        Box::new(
+            move |line: usize, _selected: bool, first_visual_line: bool, out: &mut String| {
+                if !first_visual_line {
+                    return None;
+                }
+                let line_blame = lines.get(line)?;
+                let age = format_age(line_blame.timestamp);
+                write!(out, "{} {:>3}", &line_blame.short_hash, age).ok();
+                let style = match age_bucket(line_blame.timestamp) {
+                    0 => blame_recent,
+                    2 => blame_old,
+                    _ => blame_mid,
+                };
                 Some(style)
             },
         )
