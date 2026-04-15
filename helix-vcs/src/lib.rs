@@ -12,8 +12,10 @@ use std::{
 #[cfg(feature = "git")]
 mod git;
 
+mod blame;
 mod diff;
 
+pub use blame::{BlameResult, LineBlame};
 pub use diff::{DiffHandle, Hunk};
 
 mod status;
@@ -55,6 +57,44 @@ impl DiffProviderRegistry {
                     None
                 }
             })
+    }
+
+    /// Get blame information for the given file.
+    pub fn get_blame(&self, file: &Path) -> Option<BlameResult> {
+        self.providers
+            .iter()
+            .find_map(|provider| match provider.get_blame(file) {
+                Ok(res) => Some(res),
+                Err(err) => {
+                    log::debug!("{err:#?}");
+                    log::debug!("failed to get blame for {}", file.display());
+                    None
+                }
+            })
+    }
+
+    /// Collects all changed files synchronously. Intended to be called from a blocking
+    /// context when the caller needs to process all items before using them.
+    pub fn collect_changed_files(&self, cwd: &Path) -> Result<Vec<FileChange>> {
+        // RefCell is needed because the callback is `Fn`, not `FnMut`.
+        // Safe: iteration is single-threaded and sequential.
+        let items = RefCell::new(Vec::new());
+        let found = self.providers.iter().find_map(|provider| {
+            provider
+                .for_each_changed_file(cwd, |result| {
+                    match result {
+                        Ok(change) => items.borrow_mut().push(change),
+                        Err(err) => log::warn!("error iterating changed files: {err:#}"),
+                    }
+                    true
+                })
+                .ok()
+        });
+        if found.is_some() {
+            Ok(items.into_inner())
+        } else {
+            bail!("no diff provider returns success")
+        }
     }
 
     /// Fire-and-forget changed file iteration. Runs everything in a background task. Keeps
@@ -107,6 +147,14 @@ impl DiffProvider {
             #[cfg(feature = "git")]
             Self::Git => git::get_diff_base(file),
             Self::None => bail!("No diff support compiled in"),
+        }
+    }
+
+    fn get_blame(&self, file: &Path) -> Result<BlameResult> {
+        match self {
+            #[cfg(feature = "git")]
+            Self::Git => git::get_blame(file),
+            Self::None => bail!("No blame support compiled in"),
         }
     }
 

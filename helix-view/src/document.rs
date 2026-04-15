@@ -201,6 +201,7 @@ pub struct Document {
 
     diff_handle: Option<DiffHandle>,
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
+    blame: Option<Arc<helix_vcs::BlameResult>>,
 
     // when document was used for most-recent-used buffer picker
     pub focused_at: std::time::Instant,
@@ -752,6 +753,7 @@ impl Document {
             diff_handle: None,
             config,
             version_control_head: None,
+            blame: None,
             focused_at: std::time::Instant::now(),
             readonly: false,
             jump_labels: HashMap::new(),
@@ -1946,6 +1948,14 @@ impl Document {
 
     pub fn diff_handle(&self) -> Option<&DiffHandle> {
         self.diff_handle.as_ref()
+    }
+
+    pub fn blame(&self) -> Option<&helix_vcs::BlameResult> {
+        self.blame.as_deref()
+    }
+
+    pub fn set_blame(&mut self, blame: helix_vcs::BlameResult) {
+        self.blame = Some(Arc::new(blame));
     }
 
     /// Intialize/updates the differ for this document with a new base.

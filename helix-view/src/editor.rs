@@ -827,6 +827,8 @@ pub enum GutterType {
     Spacer,
     /// Highlight local changes
     Diff,
+    /// Show git blame information
+    Blame,
 }
 
 impl std::str::FromStr for GutterType {
@@ -838,8 +840,9 @@ impl std::str::FromStr for GutterType {
             "spacer" => Ok(Self::Spacer),
             "line-numbers" => Ok(Self::LineNumbers),
             "diff" => Ok(Self::Diff),
+            "blame" => Ok(Self::Blame),
             _ => anyhow::bail!(
-                "Gutter type can only be `diagnostics`, `spacer`, `line-numbers` or `diff`."
+                "Gutter type can only be `diagnostics`, `spacer`, `line-numbers`, `diff` or `blame`."
             ),
         }
     }
@@ -1949,6 +1952,10 @@ impl Editor {
                 doc.set_diff_base(diff_base);
             }
             doc.set_version_control_head(self.diff_providers.get_current_head_name(&path));
+
+            if let Some(blame) = self.diff_providers.get_blame(&path) {
+                doc.set_blame(blame);
+            }
 
             let id = self.new_document(doc);
             self.launch_language_servers(id);
