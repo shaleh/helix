@@ -196,20 +196,25 @@ pub fn blame<'doc>(
     theme: &Theme,
     _is_focused: bool,
 ) -> GutterFn<'doc> {
-    let blame_recent = theme.try_get("ui.gutter.blame.recent").unwrap_or_else(|| theme.get("ui.gutter"));
-    let blame_mid = theme.try_get("ui.gutter.blame").unwrap_or_else(|| theme.get("ui.gutter"));
-    let blame_old = theme.try_get("ui.gutter.blame.old").unwrap_or_else(|| theme.get("ui.gutter"));
+    let blame_recent = theme
+        .try_get("ui.gutter.blame.recent")
+        .unwrap_or_else(|| theme.get("ui.gutter.blame"));
+    let blame_mid = theme
+        .try_get("ui.gutter.blame")
+        .unwrap_or_else(|| theme.get("ui.gutter"));
+    let blame_old = theme
+        .try_get("ui.gutter.blame.old")
+        .unwrap_or_else(|| theme.get("ui.gutter.blame"));
 
     if let Some(blame_data) = doc.blame() {
-        let lines = &blame_data.lines;
         Box::new(
             move |line: usize, _selected: bool, first_visual_line: bool, out: &mut String| {
                 if !first_visual_line {
                     return None;
                 }
-                let line_blame = lines.get(line)?;
+                let line_blame = blame_data.line(line as u32)?;
                 let age = format_age(line_blame.timestamp);
-                write!(out, "{} {:>3}", &line_blame.short_hash, age).ok();
+                write!(out, "{} {:>3}", line_blame.short_hash, age).ok();
                 let style = match age_bucket(line_blame.timestamp) {
                     0 => blame_recent,
                     2 => blame_old,
