@@ -17,6 +17,7 @@ use gix::status::{
 };
 use gix::{Commit, ObjectId, Repository, ThreadSafeRepository};
 
+use crate::blame::BlameResult;
 use crate::FileChange;
 
 #[cfg(test)]
@@ -198,6 +199,52 @@ fn status(repo: &Repository, f: impl Fn(Result<FileChange>) -> bool) -> Result<(
     }
 
     Ok(())
+}
+
+pub fn get_blame(file: &Path) -> Result<BlameResult> {
+    debug_assert!(!file.exists() || file.is_file());
+    debug_assert!(file.is_absolute());
+    let file = gix::path::realpath(file).context("resolve symlinks")?;
+
+    let repo_dir = get_repo_dir(&file)?;
+    let repo = open_repo(repo_dir)
+        .context("failed to open git repo")?
+        .to_thread_local();
+    let head = repo.head_commit()?;
+    let work_dir = repo.workdir().context("repo has no worktree")?;
+    let rel_path = file.strip_prefix(work_dir)?;
+    let rel_path = gix::path::try_into_bstr(rel_path)?;
+
+    let outcome = repo.blame_file(
+        rel_path.as_ref(),
+        head.id,
+        gix::repository::blame_file::Options::default(),
+    )?;
+
+    let mut result = BlameResult::new();
+
+    // Cache commit lookups — many entries share the same commit_id.
+    let mut commit_cache: std::collections::HashMap<ObjectId, (String, i64)> =
+        std::collections::HashMap::new();
+
+    for entry in &outcome.entries {
+        let (short_hash, timestamp) = match commit_cache.get(&entry.commit_id) {
+            Some(cached) => cached.clone(),
+            None => {
+                let commit = repo.find_commit(entry.commit_id)?;
+                let author = commit.author()?;
+                let timestamp = author.time()?.seconds;
+                let short_hash = entry.commit_id.to_hex_with_len(7).to_string();
+                let value = (short_hash, timestamp);
+                commit_cache.insert(entry.commit_id, value.clone());
+                value
+            }
+        };
+
+        result.push(entry.start_in_blamed_file, entry.len.get(), short_hash, timestamp);
+    }
+
+    Ok(result)
 }
 
 /// Finds the object that contains the contents of a file at a specific commit.
