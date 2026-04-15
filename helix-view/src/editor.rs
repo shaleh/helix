@@ -909,6 +909,8 @@ pub enum GutterType {
     Diff,
     /// Indicator for when code actions are available
     CodeActionHint,
+    /// Show git blame information
+    Blame,
 }
 
 impl std::str::FromStr for GutterType {
@@ -921,8 +923,9 @@ impl std::str::FromStr for GutterType {
             "line-numbers" => Ok(Self::LineNumbers),
             "diff" => Ok(Self::Diff),
             "code-action-hint" => Ok(Self::CodeActionHint),
+            "blame" => Ok(Self::Blame),
             _ => anyhow::bail!(
-                "Gutter type can only be `diagnostics`, `spacer`, `line-numbers` or `diff`."
+                "Gutter type can only be `diagnostics`, `spacer`, `line-numbers`, `diff` or `blame`."
             ),
         }
     }
@@ -2128,6 +2131,10 @@ impl Editor {
             doc.set_version_control_head(
                 self.diff_providers.get_current_head_name(&path, trust_full),
             );
+
+            if let Some(blame) = self.diff_providers.get_blame(&path) {
+                doc.set_blame(blame);
+            }
 
             let id = self.new_document(doc);
             self.launch_language_servers(id);

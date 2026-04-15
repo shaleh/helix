@@ -12,8 +12,10 @@ use std::{
 #[cfg(feature = "git")]
 mod git;
 
+mod blame;
 mod diff;
 
+pub use blame::{BlameResult, LineBlame};
 pub use diff::{DiffHandle, Hunk};
 
 mod status;
@@ -59,6 +61,20 @@ impl DiffProviderRegistry {
                 }
             }
         })
+    }
+
+    /// Get blame information for the given file.
+    pub fn get_blame(&self, file: &Path) -> Option<BlameResult> {
+        self.providers
+            .iter()
+            .find_map(|provider| match provider.get_blame(file) {
+                Ok(res) => Some(res),
+                Err(err) => {
+                    log::debug!("{err:#?}");
+                    log::debug!("failed to get blame for {}", file.display());
+                    None
+                }
+            })
     }
 
     /// Fire-and-forget changed file iteration. Runs everything in a background task. Keeps
@@ -112,6 +128,14 @@ impl DiffProvider {
             #[cfg(feature = "git")]
             Self::Git => git::get_diff_base(file, trust_full),
             Self::None => bail!("No diff support compiled in"),
+        }
+    }
+
+    fn get_blame(&self, file: &Path) -> Result<BlameResult> {
+        match self {
+            #[cfg(feature = "git")]
+            Self::Git => git::get_blame(file),
+            Self::None => bail!("No blame support compiled in"),
         }
     }
 
