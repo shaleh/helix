@@ -1,13 +1,14 @@
-use anyhow::{bail, Context, Result};
-use arc_swap::ArcSwap;
-use gix::filter::plumbing::driver::apply::Delay;
+use std::collections::{hash_map::Entry, HashMap};
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::{bail, Context, Result};
+use arc_swap::ArcSwap;
 use gix::bstr::ByteSlice;
 use gix::diff::Rewrites;
 use gix::dir::entry::Status;
+use gix::filter::plumbing::driver::apply::Delay;
 use gix::objs::tree::EntryKind;
 use gix::sec::trust::DefaultForLevel;
 use gix::status::{
@@ -224,24 +225,29 @@ pub fn get_blame(file: &Path) -> Result<BlameResult> {
     let mut result = BlameResult::new();
 
     // Cache commit lookups — many entries share the same commit_id.
-    let mut commit_cache: std::collections::HashMap<ObjectId, (String, i64)> =
-        std::collections::HashMap::new();
+    let mut commit_cache: HashMap<ObjectId, (Arc<str>, i64)> = HashMap::new();
 
-    for entry in &outcome.entries {
-        let (short_hash, timestamp) = match commit_cache.get(&entry.commit_id) {
-            Some(cached) => cached.clone(),
-            None => {
-                let commit = repo.find_commit(entry.commit_id)?;
+    for blame in &outcome.entries {
+        // The more idiomatic entry.or_insert_with cannot be used here because there is
+        // error handling to deal with in the insert case. The error handling
+        // is fairly edge case heavy but better to be ready for it.
+        let (short_hash, timestamp) = match commit_cache.entry(blame.commit_id) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let commit = repo.find_commit(blame.commit_id)?;
                 let author = commit.author()?;
                 let timestamp = author.time()?.seconds;
-                let short_hash = entry.commit_id.to_hex_with_len(7).to_string();
-                let value = (short_hash, timestamp);
-                commit_cache.insert(entry.commit_id, value.clone());
-                value
+                let short_hash = blame.commit_id.to_hex_with_len(7).to_string();
+                entry.insert((short_hash.into(), timestamp)).clone()
             }
         };
 
-        result.push(entry.start_in_blamed_file, entry.len.get(), short_hash, timestamp);
+        result.push(
+            blame.start_in_blamed_file,
+            blame.len.get(),
+            short_hash,
+            timestamp,
+        );
     }
 
     Ok(result)
