@@ -2,6 +2,9 @@
 The branch names are listed with each item.
 
 - (modeline-support) Modeline support. Tries vi then emacs before falling back to the usual detection methods.
+- (blame-gutter) Add a 'blame' entry to the gutter. Shows the hash and relative date in minutes, hours,
+  days, weeks, months, and year. "12h" is 12 hours old. "2w" is 2 weeks old.
+  ui.gutter.blame is the base with ui.gutter.blame.recent and ui.gutter.blame.old as well.
 - (text-fallback) "text" is defined as the fallback when no other language is detected. Why? The next item means now LSPs will
   load for plain files with no extension. Or new files that are unknown. Have not setup foo.lang just yet? You
   at least get whatever the base LSPs you have configured like a spell checker.
