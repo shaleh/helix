@@ -42,7 +42,8 @@ impl GutterType {
             GutterType::LineNumbers => line_numbers_width(view, doc),
             GutterType::Spacer => 1,
             GutterType::Diff => 1,
-            GutterType::Blame => 11, // "abc1234 3d " = 7 hash + space + 2-3 age + space
+            // "abc1234  3d" = 7 hash + space + age right-aligned to 3
+            GutterType::Blame => if doc.blame().is_some() { 11 } else { 0 },
         }
     }
 }
