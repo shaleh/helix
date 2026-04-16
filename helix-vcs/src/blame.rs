@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 /// Blame information for a file, stored as sorted non-overlapping ranges.
 #[derive(Clone, Debug, Default)]
 pub struct BlameResult {
@@ -13,7 +15,7 @@ struct BlameEntry {
     /// Number of lines in this range.
     len: u32,
     /// The abbreviated commit hash (hex string, 7 chars).
-    short_hash: String,
+    short_hash: Arc<str>,
     /// Unix timestamp (seconds since epoch) of the commit.
     timestamp: i64,
 }
@@ -32,7 +34,7 @@ impl BlameResult {
     }
 
     /// Add a range entry. Entries must be added in order.
-    pub fn push(&mut self, start_line: u32, len: u32, short_hash: String, timestamp: i64) {
+    pub fn push(&mut self, start_line: u32, len: u32, short_hash: Arc<str>, timestamp: i64) {
         self.entries.push(BlameEntry {
             start_line,
             len,
