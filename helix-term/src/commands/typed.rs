@@ -2970,6 +2970,27 @@ fn noop(_cx: &mut compositor::Context, _args: Args, _event: PromptEvent) -> anyh
     Ok(())
 }
 
+// My local functions are here. Eventually replaced with some kind of external script or plugin support.
+// All are prefixed with "my_" to help prevent overlap.
+
+fn my_ghv(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let (view, doc) = current_ref!(cx.editor);
+    let text = doc.text().slice(..);
+    // Always pass the absolute path. We don't know where the editor was opened.
+    let Some(filename) = doc.path() else {
+        return Err(anyhow::anyhow!("Error: no file loaded"));
+    };
+    let cursor_line = doc.selection(view.id).primary().cursor_line(text);
+    let line_number = (cursor_line + 1).to_string();
+    let cmd = ["ghv", filename.to_str().unwrap_or_default(), &line_number];
+    shell(cx, &cmd.join(" "), &ShellBehavior::Ignore);
+    Ok(())
+}
+
 /// This command accepts a single boolean --skip-visible flag and no positionals.
 const BUFFER_CLOSE_OTHERS_SIGNATURE: Signature = Signature {
     positionals: (0, Some(0)),
@@ -4125,6 +4146,18 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     }
+    TypableCommand {
+        name: "ghn",
+        name: "ghv",
+        aliases: &[],
+        doc: "Loads Github repo at the current buffers file and line.",
+        fun: my_ghv,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, None),
+            ..Signature::DEFAULT
+        },
+    },
 ];
 
 pub static TYPABLE_COMMAND_MAP: Lazy<HashMap<&'static str, &'static TypableCommand>> =
