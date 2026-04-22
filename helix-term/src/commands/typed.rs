@@ -4012,9 +4012,8 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         fun: untrust_workspace,
         completer: CommandCompleter::none(),
         signature: Signature { positionals: (0, None), ..Signature::DEFAULT },
-    }
+    },
     TypableCommand {
-        name: "ghn",
         name: "ghv",
         aliases: &[],
         doc: "Loads Github repo at the current buffers file and line.",
