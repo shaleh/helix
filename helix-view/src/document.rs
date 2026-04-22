@@ -2084,7 +2084,10 @@ impl Document {
         self.uri
             .as_ref()
             .map(|x| *x.clone())
-            .or_else(|| Url::from_file_path(self.path()?).ok())
+            .or_else(|| match self.path() {
+                Some(path) => Url::from_file_path(path).ok(),
+                None => Url::from_str(&format!("untitled://{}", self.id)).ok(),
+            })
     }
 
     pub fn uri(&self) -> Option<helix_core::Uri> {
@@ -2523,6 +2526,18 @@ mod test {
     use arc_swap::ArcSwap;
 
     use super::*;
+
+    #[test]
+    fn document_with_no_path_uses_untitled_url() {
+        let text = Rope::from("hello\r\nworld");
+        let doc = Document::from(
+            text,
+            None,
+            Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
+        );
+        assert_eq!(Url::from_str("untitled://1").ok(), doc.url());
+    }
 
     #[test]
     fn changeset_to_changes_ignore_line_endings() {
