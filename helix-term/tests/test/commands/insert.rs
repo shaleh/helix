@@ -173,6 +173,18 @@ async fn insert_newline_trim_trailing_whitespace() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn insert_newline_trim_whitespace_to_previous_selection() -> anyhow::Result<()> {
+    test((
+        indoc! {"\"#[a|]# #(a|)# #(a|)#\""},
+        "c<ret>",
+        indoc! {"\"\n#[\n|]##(\n|)##(\"|)#"},
+    ))
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn insert_newline_continue_line_comment() -> anyhow::Result<()> {
     // `insert_newline` continues a single line comment
     test((
@@ -569,5 +581,61 @@ async fn test_jump_undo_redo() -> anyhow::Result<()> {
         ),
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_indent_with_spaces() -> anyhow::Result<()> {
+    let tests = vec![
+        // at start of line
+        (
+            indoc! {"\
+                SELECT *
+                  #[|FROM table]#
+                 #(|WHERE condition)#
+            "},
+            "i<tab>",
+            indoc! {"\
+                SELECT *
+                    #[|FROM table]#
+                    #(|WHERE condition)#
+            "},
+        ),
+        // in the middle of line
+        (
+            indoc! {"\
+                SELECT #[*|]#
+                FROM #(table|)#
+                WHERE #(condition|)#
+            "},
+            "i<S-tab>",
+            indoc! {"\
+                SELECT  #[|*]#
+                FROM    #(|table)#
+                WHERE   #(|condition)#
+            "},
+        ),
+        // indentation in normal mode
+        (
+            indoc! {"\
+                -- comment
+                #[|SELECT *
+                  FROM table
+                 WHERE condition]#
+            "},
+            "<gt>",
+            indoc! {"\
+                -- comment
+                    #[|SELECT *
+                    FROM table
+                    WHERE condition]#
+            "},
+        ),
+    ];
+
+    for test in tests {
+        test_with_config(AppBuilder::new().with_file("foo.rs", None), test).await?;
+    }
+
     Ok(())
 }
