@@ -366,9 +366,7 @@ mod tests {
     use std::sync::Arc;
 
     fn test_registers() -> Registers {
-        let provider = Arc::new(arc_swap::ArcSwap::new(Arc::new(
-            ClipboardProvider::None,
-        )));
+        let provider = Arc::new(arc_swap::ArcSwap::new(Arc::new(ClipboardProvider::None)));
         Registers::new(Box::new(provider))
     }
 
@@ -382,8 +380,8 @@ mod tests {
 
         let history = regs.read_history('"').unwrap();
         assert_eq!(history.len(), 5);
-        assert_eq!(history[0], vec!["yank4".to_string()]); // most recent
-        assert_eq!(history[4], vec!["yank0".to_string()]); // oldest
+        assert_eq!(history[0], ["yank4".to_string()].into()); // oldest
+        assert_eq!(history[4], ["yank0".to_string()].into()); // oldest
     }
 
     // US1: Multi-line yanks are preserved as a single history entry.
@@ -396,25 +394,22 @@ mod tests {
 
         let history = regs.read_history('"').unwrap();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0], vec!["short".to_string()]);
-        assert_eq!(history[1], vec![function_body]);
+        assert_eq!(history[0], ["short".to_string()].into());
+        assert_eq!(history[1], [function_body].into());
     }
 
     // US1: Multi-selection yanks store all selections as one entry.
     #[test]
     fn multi_selection_yank_preserved_in_history() {
         let mut regs = test_registers();
-        regs.write(
-            '"',
-            vec!["sel1".into(), "sel2".into(), "sel3".into()],
-        )
-        .unwrap();
+        regs.write('"', vec!["sel1".into(), "sel2".into(), "sel3".into()])
+            .unwrap();
 
         let history = regs.read_history('"').unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(
             history[0],
-            vec!["sel1".to_string(), "sel2".to_string(), "sel3".to_string()]
+            ["sel1".to_string(), "sel2".to_string(), "sel3".to_string()].into()
         );
     }
 
@@ -432,8 +427,14 @@ mod tests {
         assert_eq!(regs.read_history('b').unwrap().len(), 1);
         assert_eq!(regs.read_history('"').unwrap().len(), 1);
         // Register a shows only its own entries.
-        assert_eq!(regs.read_history('a').unwrap()[0], vec!["a3".to_string()]);
-        assert_eq!(regs.read_history('a').unwrap()[2], vec!["a1".to_string()]);
+        assert_eq!(
+            regs.read_history('a').unwrap()[0],
+            ["a3".to_string()].into()
+        );
+        assert_eq!(
+            regs.read_history('a').unwrap()[2],
+            ["a1".to_string()].into()
+        );
     }
 
     // US2: Yanking 12 items keeps only the 10 most recent.
@@ -446,10 +447,10 @@ mod tests {
 
         let history = regs.read_history('"').unwrap();
         assert_eq!(history.len(), MAX_HISTORY_ENTRIES);
-        assert_eq!(history[0], vec!["yank11".to_string()]); // most recent
+        assert_eq!(history[0], ["yank11".to_string()].into()); // most recent
         assert_eq!(
             history[MAX_HISTORY_ENTRIES - 1],
-            vec!["yank2".to_string()] // oldest kept
+            ["yank2".to_string()].into() // oldest kept
         );
     }
 
@@ -483,7 +484,7 @@ mod tests {
 
         let history = regs.read_history('a').unwrap();
         assert_eq!(history.len(), 1);
-        assert_eq!(history[0], vec!["initial".to_string()]);
+        assert_eq!(history[0], ["initial".to_string()].into());
     }
 
     // Edge: Yanking the same content consecutively does not create duplicates.
@@ -501,7 +502,7 @@ mod tests {
         regs.write('"', vec!["different".into()]).unwrap();
         let history = regs.read_history('"').unwrap();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0], vec!["different".to_string()]);
-        assert_eq!(history[1], vec!["same".to_string()]);
+        assert_eq!(history[0], ["different".to_string()].into());
+        assert_eq!(history[1], ["same".to_string()].into());
     }
 }
