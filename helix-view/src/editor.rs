@@ -49,7 +49,7 @@ use helix_core::{
     syntax::{
         self,
         config::{
-            AutoPairConfig, IndentationHeuristic, LanguageConfiguration, LanguageServerFeature,
+            AutoPairConfig, IndentationHeuristic, LanguageConfiguration,
             SoftWrap,
         },
     },
@@ -2266,7 +2266,7 @@ impl Editor {
         let text = document.text().clone();
         let language_config = document.language.clone();
         // Need to clone the clients to avoid adding a lifetime marker to `Document`.
-        let doc_language_servers: Vec<_> = document.language_servers.values().cloned().collect();
+        let _doc_language_servers: Vec<_> = document.language_servers.values().cloned().collect();
         document
             .uri()
             .and_then(|uri| diagnostics.get(&uri))

@@ -705,7 +705,7 @@ fn default_true() -> bool {
     true
 }
 
-fn default_timeout() -> u64 {
+pub fn default_timeout() -> u64 {
     20
 }
 

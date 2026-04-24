@@ -2474,6 +2474,7 @@ impl HelixConfiguration {
                 config: None,
                 timeout: default_timeout(),
                 required_root_patterns: None,
+                path_mapping: Vec::new(),
             };
 
             if let Some(args) = map.get("args") {
