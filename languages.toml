@@ -2912,6 +2912,7 @@ roots = ["project.clj", "build.boot", "deps.edn", "shadow-cljs.edn"]
 comment-token = ";"
 language-servers = [ "clojure-lsp" ]
 indent = { tab-width = 2, unit = "  " }
+formatter = { command = "cljfmt", args = ["fix", "-"] }
 
 [[grammar]]
 name = "clojure"
