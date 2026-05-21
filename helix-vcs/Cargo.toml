@@ -17,7 +17,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "p
 parking_lot.workspace = true
 arc-swap.workspace = true
 
-gix = { version = "0.84.0", features = ["attributes", "blame", "status", "max-performance", "sha1"], default-features = false, optional = true }
+gix = { path = "/Users/seanperry/repos/opensource/gitoxide/gix", features = ["attributes", "blame", "max-performance", "revision", "sha1", "status"], default-features = false, optional = true }
 imara-diff =  "0.2.0"
 anyhow = "1"
 
