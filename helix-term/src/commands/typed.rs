@@ -2200,7 +2200,13 @@ fn set_option(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> a
     } else {
         arg.parse().map_err(field_error)?
     };
-    let config = serde_json::from_value(config).map_err(field_error)?;
+    let mut config: Box<helix_view::editor::Config> =
+        serde_json::from_value(config).map_err(field_error)?;
+    // The JSON value built above already carries `commands` through the
+    // round-trip, but copy it back explicitly so a future refactor that
+    // builds the value from a partial source can't silently drop
+    // user-defined aliases.
+    config.commands = cx.editor.config().commands.clone();
 
     cx.editor
         .config_events
@@ -2294,8 +2300,12 @@ fn toggle_option(
     };
 
     let status = format!("'{key}' is now set to {value}");
-    let config = serde_json::from_value(config)
+    let mut config: Box<helix_view::editor::Config> = serde_json::from_value(config)
         .map_err(|err| anyhow::anyhow!("Failed to parse config: {err}"))?;
+    // The JSON value above carries `commands` through the round-trip, but
+    // copy it back explicitly so a future refactor that builds the value
+    // from a partial source can't silently drop user-defined aliases.
+    config.commands = cx.editor.config().commands.clone();
 
     cx.editor
         .config_events
@@ -4012,13 +4022,46 @@ pub static TYPABLE_COMMAND_MAP: Lazy<HashMap<&'static str, &'static TypableComma
             .collect()
     });
 
+/// Cap on alias-to-alias recursion. Counted across every command line that
+/// expansion produces, so an alias whose body is `[":a", ":b"]` where both
+/// are themselves aliases is depth 2 from the top-level invocation.
+const MAX_ALIAS_DEPTH: u8 = 8;
+
 fn execute_command_line(
     cx: &mut compositor::Context,
     input: &str,
     event: PromptEvent,
 ) -> anyhow::Result<()> {
+    execute_command_line_with_depth(cx, input, event, 0)
+}
+
+fn execute_command_line_with_depth(
+    cx: &mut compositor::Context,
+    input: &str,
+    event: PromptEvent,
+    depth: u8,
+) -> anyhow::Result<()> {
     let (command, rest, _) = command_line::split(input);
     if command.is_empty() {
+        return Ok(());
+    }
+
+    // User-defined aliases win over both numeric-goto and builtins so users
+    // can shadow whatever they want. Take an Arc clone out of the config so
+    // the config guard can drop before the recursive dispatch call.
+    let alias = {
+        let config = cx.editor.config();
+        config.commands.get(command).cloned()
+    };
+    if let Some(alias) = alias {
+        if depth >= MAX_ALIAS_DEPTH {
+            return Err(anyhow!(
+                "alias-recursion depth exceeded (>{MAX_ALIAS_DEPTH}) while expanding '{command}'"
+            ));
+        }
+        for line in &alias.commands {
+            execute_command_line_with_depth(cx, line, event, depth + 1)?;
+        }
         return Ok(());
     }
 
@@ -4149,14 +4192,17 @@ fn complete_command_line(editor: &Editor, input: &str) -> Vec<ui::prompt::Comple
     let (command, rest, complete_command) = command_line::split(input);
 
     if complete_command {
-        fuzzy_match(
-            input,
-            TYPABLE_COMMAND_LIST.iter().map(|command| command.name),
-            false,
-        )
-        .into_iter()
-        .map(|(name, _)| (0.., name.into()))
-        .collect()
+        let config = editor.config();
+        let builtins = TYPABLE_COMMAND_LIST.iter().map(|command| command.name);
+        let aliases = config
+            .commands
+            .iter()
+            .filter(|(_, entry)| entry.visible)
+            .map(|(name, _)| name.as_str());
+        fuzzy_match(input, builtins.chain(aliases), false)
+            .into_iter()
+            .map(|(name, _)| (0.., name.to_string().into()))
+            .collect()
     } else {
         TYPABLE_COMMAND_MAP
             .get(command)

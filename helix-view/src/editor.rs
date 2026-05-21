@@ -291,6 +291,18 @@ where
     Ok(chars)
 }
 
+/// A user-defined typable command alias.
+///
+/// The `commands` list is dispatched in order when the alias fires. The
+/// `visible` flag controls whether the alias shows up in command-mode tab
+/// completion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+pub struct AliasEntry {
+    pub commands: Vec<String>,
+    pub visible: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct Config {
@@ -434,6 +446,20 @@ pub struct Config {
     pub buffer_picker: BufferPickerConfig,
     /// Whether to implicitly trust every workspace or not
     pub insecure: bool,
+    /// User-defined typable command aliases. Populated from the top-level
+    /// `[commands]` TOML table by the config loader, not from a field named
+    /// `commands` inside `[editor]`.
+    ///
+    /// Entries are wrapped in `Arc` so the dispatch path can clone an
+    /// alias out of the config (refcount bump only) and then drop the
+    /// config guard before recursing.
+    ///
+    /// Any command that rebuilds this struct by round-tripping it through
+    /// `serde_json::from_value` after splicing in a new value must copy
+    /// this map back explicitly after the round-trip, or user-defined
+    /// aliases will silently vanish.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub commands: HashMap<String, Arc<AliasEntry>>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
@@ -1157,6 +1183,7 @@ impl Default for Config {
             kitty_keyboard_protocol: Default::default(),
             buffer_picker: BufferPickerConfig::default(),
             insecure: false,
+            commands: HashMap::new(),
         }
     }
 }
