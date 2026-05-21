@@ -46,7 +46,7 @@ argument set you can't remember:
 ":q" = ":quit"
 
 # A saved argument set you'd otherwise re-type:
-":show-blame" = ":set-option editor.gutters [\"diagnostics\", \"spacer\", \"line-numbers\", \"spacer\", \"blame\"]"
+":show-blame" = ":set-option gutters [\"diagnostics\", \"spacer\", \"line-numbers\", \"spacer\", \"blame\"]"
 
 # Sequence of commands, run in order:
 ":wq" = [":write", ":quit"]
