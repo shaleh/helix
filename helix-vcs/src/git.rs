@@ -216,11 +216,15 @@ pub fn get_blame(file: &Path) -> Result<BlameResult> {
     let rel_path = file.strip_prefix(work_dir)?;
     let rel_path = gix::path::try_into_bstr(rel_path)?;
 
-    let outcome = repo.blame_file(
-        rel_path.as_ref(),
-        head.id,
-        gix::repository::blame_file::Options::default(),
-    )?;
+    let mut options = gix::repository::blame_file::Options::default();
+    match repo.ignore_revs_from_file(work_dir.join(".git-blame-ignore-revs")) {
+        Ok(ids) => options.ignored_revs = ids,
+        Err(gix::repository::ignore_revs::Error::Io(err))
+            if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    let outcome = repo.blame_file(rel_path.as_ref(), head.id, options)?;
 
     let mut result = BlameResult::new();
 
