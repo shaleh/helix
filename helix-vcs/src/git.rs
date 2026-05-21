@@ -217,9 +217,16 @@ pub fn get_blame(file: &Path) -> Result<BlameResult> {
     let rel_path = gix::path::try_into_bstr(rel_path)?;
 
     let mut options = gix::repository::blame_file::Options::default();
+    options.rewrites = Some(gix::diff::Rewrites::default());
     let ignore_revs_file = work_dir.join(".git-blame-ignore-revs");
     match repo.ignore_revs_from_file(&ignore_revs_file) {
-        Ok(ids) => options.ignored_revs = ids,
+        Ok(ids) => {
+            log::debug!("ignore_revs loaded {} commits", ids.len());
+            for id in &ids {
+                log::debug!("  {}", id);
+            }
+            options.ignored_revs = ids;
+        }
         Err(gix::repository::ignore_revs::Error::Io(err))
             if err.kind() == std::io::ErrorKind::NotFound =>
         {
