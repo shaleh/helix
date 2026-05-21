@@ -16,7 +16,7 @@ use self::document_colors::DocumentColorsHandler;
 use self::document_links::DocumentLinksHandler;
 
 mod auto_save;
-mod blame;
+pub(crate) mod blame;
 pub mod completion;
 pub mod diagnostics;
 mod document_colors;

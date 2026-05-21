@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
 use helix_core::syntax::config::LanguageServerFeature;
+use helix_vcs::Hunk;
 
 use crate::{
     editor::GutterType,
@@ -190,6 +191,23 @@ fn age_bucket(timestamp: i64) -> u8 {
     }
 }
 
+/// Maps a buffer line back to its line number in HEAD by accumulating the
+/// hunk-size deltas above it. Returns `None` for lines inside an added or
+/// modified hunk. `hunks` must be sorted by `after.start`.
+fn translate_blame_line(line: u32, hunks: &[Hunk]) -> Option<u32> {
+    let mut delta: i32 = 0;
+    for hunk in hunks {
+        if hunk.after.start > line {
+            break;
+        }
+        if line < hunk.after.end {
+            return None;
+        }
+        delta += hunk.after.len() as i32 - hunk.before.len() as i32;
+    }
+    Some((line as i32 - delta) as u32)
+}
+
 pub fn blame<'doc>(
     _editor: &'doc Editor,
     doc: &'doc Document,
@@ -207,13 +225,24 @@ pub fn blame<'doc>(
         .try_get("ui.gutter.blame.old")
         .unwrap_or_else(|| theme.get("ui.gutter.blame"));
 
+    // Snapshot once so every line of this frame sees the same hunks; the
+    // diff worker can advance the lock between render calls.
+    let hunks: Vec<Hunk> = doc
+        .diff_handle()
+        .map(|handle| {
+            let diff = handle.load();
+            (0..diff.len()).map(|i| diff.nth_hunk(i)).collect()
+        })
+        .unwrap_or_default();
+
     if let Some(blame_data) = doc.blame() {
         Box::new(
             move |line: usize, _selected: bool, first_visual_line: bool, out: &mut String| {
                 if !first_visual_line {
                     return None;
                 }
-                let line_blame = blame_data.line(line as u32)?;
+                let head_line = translate_blame_line(line as u32, &hunks)?;
+                let line_blame = blame_data.line(head_line)?;
                 let age = format_age(line_blame.timestamp);
                 write!(out, "{} {:>3}", line_blame.short_hash, age).ok();
                 let style = match age_bucket(line_blame.timestamp) {
@@ -519,5 +548,92 @@ mod tests {
         assert_eq!(view.gutters.layout.len(), 2);
         assert_eq!(view.gutters.layout[1].width(&view, &doc_short), 1);
         assert_eq!(view.gutters.layout[1].width(&view, &doc_long), 2);
+    }
+
+    fn hunk(before: std::ops::Range<u32>, after: std::ops::Range<u32>) -> Hunk {
+        Hunk { before, after }
+    }
+
+    #[test]
+    fn translate_blame_line_identity_with_no_hunks() {
+        assert_eq!(translate_blame_line(0, &[]), Some(0));
+        assert_eq!(translate_blame_line(7, &[]), Some(7));
+        assert_eq!(translate_blame_line(u32::MAX - 1, &[]), Some(u32::MAX - 1));
+    }
+
+    #[test]
+    fn translate_blame_line_above_all_hunks_is_identity() {
+        // Hunk well below the queried line means line is unaffected.
+        let hunks = vec![hunk(10..12, 10..15)];
+        assert_eq!(translate_blame_line(5, &hunks), Some(5));
+    }
+
+    #[test]
+    fn translate_blame_line_below_an_insertion_shifts_back() {
+        // Pure insertion of 3 lines at row 10 in the buffer.
+        // (before is empty range, after spans 3 buffer rows.)
+        let hunks = vec![hunk(10..10, 10..13)];
+
+        // Lines above the insertion are unchanged.
+        assert_eq!(translate_blame_line(9, &hunks), Some(9));
+
+        // Lines inside the insertion are uncommitted.
+        assert_eq!(translate_blame_line(10, &hunks), None);
+        assert_eq!(translate_blame_line(11, &hunks), None);
+        assert_eq!(translate_blame_line(12, &hunks), None);
+
+        // First line below the insertion maps back by 3.
+        assert_eq!(translate_blame_line(13, &hunks), Some(10));
+        assert_eq!(translate_blame_line(20, &hunks), Some(17));
+    }
+
+    #[test]
+    fn translate_blame_line_below_a_deletion_shifts_forward() {
+        // Pure deletion: 2 HEAD lines (5..7) are gone in the buffer.
+        // The deletion occupies no buffer rows (after is empty at row 5).
+        let hunks = vec![hunk(5..7, 5..5)];
+
+        // Lines above are unchanged.
+        assert_eq!(translate_blame_line(4, &hunks), Some(4));
+
+        // Buffer row 5 is the first row that existed in HEAD as row 7.
+        assert_eq!(translate_blame_line(5, &hunks), Some(7));
+        assert_eq!(translate_blame_line(10, &hunks), Some(12));
+    }
+
+    #[test]
+    fn translate_blame_line_modified_lines_are_uncommitted() {
+        // Replacement: 2 HEAD lines replaced by 4 buffer lines at row 8.
+        let hunks = vec![hunk(8..10, 8..12)];
+
+        assert_eq!(translate_blame_line(7, &hunks), Some(7));
+        // All four buffer rows of the replacement are uncommitted.
+        for row in 8..12 {
+            assert_eq!(translate_blame_line(row, &hunks), None);
+        }
+        // Below the replacement, delta is +2 (added 4, removed 2).
+        assert_eq!(translate_blame_line(12, &hunks), Some(10));
+    }
+
+    #[test]
+    fn translate_blame_line_multiple_hunks_accumulate_delta() {
+        // Insertion of 3 lines at row 5, deletion of 1 line at HEAD row 20.
+        // After insertion, that deletion appears at buffer row 23 (20 + 3
+        // because the insertion above shifted everything down).
+        let hunks = vec![hunk(5..5, 5..8), hunk(20..21, 23..23)];
+
+        // Above all hunks: identity.
+        assert_eq!(translate_blame_line(4, &hunks), Some(4));
+
+        // Inside the insertion.
+        assert_eq!(translate_blame_line(6, &hunks), None);
+
+        // Between the two hunks: delta = +3 from the insertion above.
+        assert_eq!(translate_blame_line(10, &hunks), Some(7));
+        assert_eq!(translate_blame_line(22, &hunks), Some(19));
+
+        // Below the deletion: delta = +3 - 1 = +2.
+        assert_eq!(translate_blame_line(23, &hunks), Some(21));
+        assert_eq!(translate_blame_line(30, &hunks), Some(28));
     }
 }

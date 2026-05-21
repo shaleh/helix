@@ -1,6 +1,7 @@
 use helix_event::register_hook;
+use helix_view::editor::GutterType;
 use helix_view::events::DocumentDidOpen;
-use helix_view::DocumentId;
+use helix_view::{DocumentId, Editor};
 
 use crate::job;
 
@@ -11,7 +12,19 @@ pub(super) fn register_hooks(_handlers: &helix_view::handlers::Handlers) {
     });
 }
 
-fn request_blame(editor: &mut helix_view::Editor, doc_id: DocumentId) {
+pub(crate) fn blame_gutter_enabled(editor: &Editor) -> bool {
+    blame_gutter_in_layout(&editor.config().gutters.layout)
+}
+
+pub(crate) fn blame_gutter_in_layout(layout: &[GutterType]) -> bool {
+    layout.contains(&GutterType::Blame)
+}
+
+pub(crate) fn request_blame(editor: &mut Editor, doc_id: DocumentId) {
+    if !blame_gutter_enabled(editor) {
+        return;
+    }
+
     let doc = match editor.document(doc_id) {
         Some(doc) => doc,
         None => return,
@@ -36,4 +49,24 @@ fn request_blame(editor: &mut helix_view::Editor, doc_id: DocumentId) {
             .await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blame_gutter_predicate() {
+        assert!(blame_gutter_in_layout(&[GutterType::Blame]));
+        assert!(blame_gutter_in_layout(&[
+            GutterType::Diagnostics,
+            GutterType::Blame,
+            GutterType::LineNumbers,
+        ]));
+        assert!(!blame_gutter_in_layout(&[]));
+        assert!(!blame_gutter_in_layout(&[
+            GutterType::Diagnostics,
+            GutterType::LineNumbers,
+        ]));
+    }
 }
