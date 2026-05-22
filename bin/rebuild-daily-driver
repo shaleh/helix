@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+#
+# Rebuild the daily-driver branch on top of upstream/master, re-merging
+# every branch listed (in order) under '## <branch-name>' headings in
+# changelog.daily-driver.
+#
+# Default: show the plan and reconciliation warnings, then exit. Need
+# --rebuild to actually act, --push to also force-push origin/daily-driver,
+# --continue to resume after resolving a merge conflict by hand.
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: bin/rebuild-daily-driver [--rebuild | --continue] [--push]
+
+  (no flag)    Show plan and warnings; do not modify anything.
+  --rebuild    Fetch upstream/master, reset daily-driver to it, then
+               re-merge each branch listed in changelog.daily-driver.
+  --continue   Resume after a merge conflict. Pick up from the first
+               branch in the changelog that isn't yet merged into
+               daily-driver. Use this AFTER you have resolved conflicts
+               and committed the merge with 'git merge --continue'.
+  --push       After a clean rebuild (or continue), force-push
+               origin/daily-driver with --force-with-lease. Implies
+               --rebuild if used alone.
+EOF
+}
+
+MODE="dry-run"  # dry-run | rebuild | continue
+PUSH=0
+for arg in "$@"; do
+    case "$arg" in
+        --rebuild)   MODE="rebuild" ;;
+        --continue)  MODE="continue" ;;
+        --push)      PUSH=1 ;;
+        -h|--help)   usage; exit 0 ;;
+        *) echo "unknown arg: $arg" >&2; usage >&2; exit 2 ;;
+    esac
+done
+# --push alone (no mode) means "rebuild and push"
+[[ $PUSH -eq 1 && "$MODE" == "dry-run" ]] && MODE="rebuild"
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+CHANGELOG="changelog.daily-driver"
+[[ -f "$CHANGELOG" ]] || { echo "missing $CHANGELOG" >&2; exit 1; }
+
+# Branches listed in the changelog, in document order.
+BRANCHES=()
+while IFS= read -r b; do
+    BRANCHES+=("$b")
+done < <(grep -E '^## [^[:space:]]+$' "$CHANGELOG" | sed 's/^## //')
+
+if [[ ${#BRANCHES[@]} -eq 0 ]]; then
+    echo "no '## <branch>' entries in $CHANGELOG" >&2
+    exit 1
+fi
+
+contains() {
+    local needle="$1"; shift
+    local item
+    for item in "$@"; do [[ "$item" == "$needle" ]] && return 0; done
+    return 1
+}
+
+# Refuse to do anything if a merge is half-done. The error text differs
+# between modes — in continue we want the user to finish; in rebuild we
+# want them to abort first.
+if [[ -e .git/MERGE_HEAD ]]; then
+    echo "error: unresolved merge in progress (.git/MERGE_HEAD exists)" >&2
+    case "$MODE" in
+        continue) echo "       resolve conflicts and 'git merge --continue' first" >&2 ;;
+        *)        echo "       finish it, or 'git merge --abort', before rebuilding" >&2 ;;
+    esac
+    exit 1
+fi
+
+# Verify each listed branch exists locally — refuse to start otherwise.
+MISSING=()
+for b in "${BRANCHES[@]}"; do
+    git rev-parse --verify "$b" >/dev/null 2>&1 || MISSING+=("$b")
+done
+
+# Plan + reconciliation are only meaningful in dry-run and rebuild modes.
+# In continue mode, daily-driver is mid-rebuild and the comparison would
+# show false positives.
+if [[ "$MODE" != "continue" ]]; then
+    IN_HISTORY=()
+    if git rev-parse --verify daily-driver >/dev/null 2>&1; then
+        while IFS= read -r b; do
+            [[ "$b" == "master" ]] && continue
+            IN_HISTORY+=("$b")
+        done < <(
+            git log daily-driver --first-parent --pretty=%s \
+                | grep -oE "Merge branch '[^']+' into daily-driver" \
+                | sed -E "s/Merge branch '(.+)' into daily-driver/\1/" \
+                | sort -u
+        )
+    fi
+    DROPPED=()
+    if [[ ${#IN_HISTORY[@]} -gt 0 ]]; then
+        for b in "${IN_HISTORY[@]}"; do
+            contains "$b" "${BRANCHES[@]}" || DROPPED+=("$b")
+        done
+    fi
+
+    echo "Plan: reset daily-driver to upstream/master, then merge in order:"
+    for b in "${BRANCHES[@]}"; do echo "  - $b"; done
+
+    if [[ ${#DROPPED[@]} -gt 0 ]]; then
+        echo
+        echo "warn: previously merged into daily-driver, not in changelog (will be dropped):"
+        for b in "${DROPPED[@]}"; do echo "  - $b"; done
+    fi
+fi
+
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+    echo
+    echo "error: branch(es) listed in changelog but missing locally:" >&2
+    for b in "${MISSING[@]}"; do echo "  - $b" >&2; done
+    exit 1
+fi
+
+if [[ "$MODE" == "dry-run" ]]; then
+    echo
+    echo "Dry run. Pass --rebuild to execute, --push to also publish."
+    exit 0
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo "error: working tree not clean; commit or stash first" >&2
+    exit 1
+fi
+
+# Mode-specific setup. After this block daily-driver is checked out and
+# pointed at the starting position for the merge loop.
+case "$MODE" in
+    rebuild)
+        echo
+        echo "==> fetching upstream/master"
+        git fetch upstream master
+
+        if git rev-parse --verify daily-driver >/dev/null 2>&1; then
+            git checkout daily-driver
+        else
+            git checkout -b daily-driver upstream/master
+        fi
+
+        echo "==> resetting daily-driver to upstream/master"
+        git reset --hard upstream/master
+        ;;
+    continue)
+        if ! git rev-parse --verify daily-driver >/dev/null 2>&1; then
+            echo "error: daily-driver does not exist; nothing to continue" >&2
+            exit 1
+        fi
+        if ! git rev-parse --verify upstream/master >/dev/null 2>&1; then
+            echo "error: upstream/master not resolvable; can't continue" >&2
+            exit 1
+        fi
+        git checkout daily-driver
+        echo
+        echo "==> resuming on daily-driver"
+        ;;
+esac
+
+# Branches already merged into the current daily-driver since
+# upstream/master. After a fresh reset this is empty; on --continue it
+# captures everything merged in the prior aborted run, including the one
+# the user just resolved by hand.
+ALREADY_MERGED=()
+while IFS= read -r subject; do
+    [[ -z "$subject" ]] && continue
+    name=$(echo "$subject" | sed -E "s/^Merge branch '(.+)' into daily-driver$/\1/")
+    ALREADY_MERGED+=("$name")
+done < <(
+    git log "upstream/master..HEAD" --first-parent --pretty=%s 2>/dev/null \
+        | grep -E "^Merge branch '[^']+' into daily-driver$" || true
+)
+
+if [[ ${#ALREADY_MERGED[@]} -gt 0 && "$MODE" == "continue" ]]; then
+    echo "    already merged in this run:"
+    for b in "${ALREADY_MERGED[@]}"; do echo "      - $b"; done
+fi
+
+for b in "${BRANCHES[@]}"; do
+    # The length guard avoids expanding "${ALREADY_MERGED[@]}" when the
+    # array is empty — under set -u that triggers an unbound-variable
+    # error on older bash, even though the array is explicitly declared.
+    if [[ ${#ALREADY_MERGED[@]} -gt 0 ]] && contains "$b" "${ALREADY_MERGED[@]}"; then
+        echo "==> skipping $b (already merged)"
+        continue
+    fi
+    echo "==> merging $b"
+    if ! git merge --no-ff -m "Merge branch '$b' into daily-driver" "$b"; then
+        cat >&2 <<EOF
+
+Merge of '$b' hit conflicts.
+
+Next steps:
+  1. Resolve conflicts in the listed files.
+  2. Stage the fixes:       git add <files>
+  3. Finish the merge:      git merge --continue
+  4. Resume the rebuild:    bin/rebuild-daily-driver --continue
+
+To abandon and start fresh:
+                            git merge --abort
+                            bin/rebuild-daily-driver --rebuild
+EOF
+        exit 1
+    fi
+done
+
+if [[ $PUSH -eq 1 ]]; then
+    echo "==> pushing origin/daily-driver (force-with-lease)"
+    git push --force-with-lease origin daily-driver
+fi
+
+echo "Done."
