@@ -216,8 +216,10 @@ pub fn get_blame(file: &Path) -> Result<BlameResult> {
     let rel_path = file.strip_prefix(work_dir)?;
     let rel_path = gix::path::try_into_bstr(rel_path)?;
 
-    let mut options = gix::repository::blame_file::Options::default();
-    options.rewrites = Some(gix::diff::Rewrites::default());
+    let mut options = gix::repository::blame_file::Options {
+        rewrites: Some(gix::diff::Rewrites::default()),
+        ..Default::default()
+    };
     let ignore_revs_file = work_dir.join(".git-blame-ignore-revs");
     match repo.ignore_revs_from_file(&ignore_revs_file) {
         Ok(ids) => {
