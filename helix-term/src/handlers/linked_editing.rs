@@ -617,4 +617,167 @@ mod tests {
             None
         );
     }
+
+    // The next three tests describe edit shapes a user runs into when renaming
+    // a tag name and currently fail. The mid-range insertion case above passes,
+    // which masks them in the existing coverage. Reported from helix-editor#15441
+    // integration testing.
+
+    #[test]
+    fn rebase_linked_ranges_tracks_insert_at_active_range_start() {
+        // Typing the first character of a new tag name (e.g. `<foo>` -> `<Xfoo>`
+        // by pressing `i` on `f` and then `X`) is a zero-width insertion at the
+        // active range's start. The active range should grow to include the new
+        // character so that mirror logic reads back the post-edit name.
+        let text = Rope::from("<foo></foo>");
+        let pending_changes =
+            Transaction::change(&text, [(1, 1, Some(Tendril::from("X")))].into_iter());
+        let mut ranges = vec![Range::new(1, 4), Range::new(7, 10)];
+
+        let active_idx = rebase_linked_ranges(&mut ranges, pending_changes.changes());
+
+        assert_eq!(active_idx, Some(0));
+        // Document is now `<Xfoo></foo>`; active range should cover `Xfoo`.
+        assert_eq!(ranges[0], Range::new(1, 5));
+        assert_eq!(ranges[1], Range::new(8, 11));
+    }
+
+    #[test]
+    fn rebase_linked_ranges_tracks_insert_at_active_range_end() {
+        // Typing one past the last character of a tag name (e.g. `<foo>` ->
+        // `<fooX>` by pressing `a` on `o` and then `X`) is a zero-width
+        // insertion at the active range's end position. The range should grow.
+        let text = Rope::from("<foo></foo>");
+        let pending_changes =
+            Transaction::change(&text, [(4, 4, Some(Tendril::from("X")))].into_iter());
+        let mut ranges = vec![Range::new(1, 4), Range::new(7, 10)];
+
+        let active_idx = rebase_linked_ranges(&mut ranges, pending_changes.changes());
+
+        assert_eq!(active_idx, Some(0));
+        // Document is now `<fooX></foo>`; active range should cover `fooX`.
+        assert_eq!(ranges[0], Range::new(1, 5));
+        assert_eq!(ranges[1], Range::new(8, 11));
+    }
+
+    #[test]
+    fn rebase_linked_ranges_tracks_whole_range_replacement() {
+        // Selecting the whole tag name and replacing it (e.g. `w` then `c bar`
+        // in Helix) produces a single transaction that deletes the entire
+        // active range and inserts new text at the same position. The range
+        // should track to cover the replacement text.
+        let text = Rope::from("<foo></foo>");
+        let pending_changes =
+            Transaction::change(&text, [(1, 4, Some(Tendril::from("bar")))].into_iter());
+        let mut ranges = vec![Range::new(1, 4), Range::new(7, 10)];
+
+        let active_idx = rebase_linked_ranges(&mut ranges, pending_changes.changes());
+
+        assert_eq!(active_idx, Some(0));
+        // Document is now `<bar></foo>`; active range should cover `bar`.
+        assert_eq!(ranges[0], Range::new(1, 4));
+        assert_eq!(ranges[1], Range::new(7, 10));
+    }
+
+    #[test]
+    fn backspace_after_add_still_mirrors() {
+        // Full v9 -> v10 -> v11 cycle: user adds "X" at the end of the tag
+        // name, mirror writes "fooX" to the sibling, then user backspaces.
+        // The backspace should produce a mirror that replaces the sibling's
+        // current content with the active range's new content ("foo").
+        let mut text = Rope::from("<foo></foo>");
+        let mut ranges = vec![Range::new(1, 4), Range::new(7, 10)];
+
+        // Stage 1 (v9): user inserts "X" at position 4.
+        let user_add = Transaction::change(&text, [(4, 4, Some(Tendril::from("X")))].into_iter());
+        let active_idx = rebase_linked_ranges(&mut ranges, user_add.changes()).unwrap();
+        assert_eq!(active_idx, 0);
+        let _ = user_add.apply(&mut text);
+        // text is now `<fooX></foo>`; ranges = [(1, 5), (8, 11)]
+
+        // Stage 2 (v10): apply the mirror to the sibling, then process the
+        // mirror's own transaction through update_ranges (it's not a ghost).
+        let active_text = text.slice(ranges[0].from()..ranges[0].to()).to_string();
+        let mirror_a = Transaction::change(
+            &text,
+            [(ranges[1].from(), ranges[1].to(), Some(Tendril::from(active_text.as_str())))]
+                .into_iter(),
+        );
+        update_ranges(&mut ranges, mirror_a.changes());
+        let _ = mirror_a.apply(&mut text);
+        // text is now `<fooX></fooX>`.
+
+        // Stage 3 (v11): user backspaces at the end of the opening tag.
+        // The "X" is at position 4 in the new text; backspace deletes (4..5).
+        let user_back = Transaction::change(&text, [(4, 5, None)].into_iter());
+        let active_idx_b = rebase_linked_ranges(&mut ranges, user_back.changes()).unwrap();
+        assert_eq!(active_idx_b, 0);
+        let _ = user_back.apply(&mut text);
+        // text is now `<foo></fooX>` (the closing tag still has the X — that's
+        // what the mirror is supposed to undo).
+
+        // The mirror should now write the active range's new text ("foo") to
+        // the sibling and the sibling range should still point at the actual
+        // tag-name characters, not somewhere past the end of the tag.
+        let new_active_text = text.slice(ranges[0].from()..ranges[0].to()).to_string();
+        assert_eq!(new_active_text, "foo");
+
+        let sibling = ranges[1];
+        let sibling_text = text.slice(sibling.from()..sibling.to()).to_string();
+        assert_eq!(
+            sibling_text, "fooX",
+            "sibling range should still cover the closing tag's current name `fooX` so the \
+             mirror can replace it with `foo`, not point past the end of the tag",
+        );
+    }
+
+    #[test]
+    fn sibling_range_survives_mirror_write() {
+        // After apply_linked_edits writes new text to a sibling range, the
+        // hook fires again on the mirror's own transaction (it's not a ghost
+        // transaction) and update_ranges runs against the sibling. The
+        // sibling should still track its post-mirror extent so a subsequent
+        // user edit can be mirrored correctly. With Assoc::After on both
+        // endpoints the range collapses to zero-width past the end of the
+        // tag name — and the next user edit produces a broken mirror.
+        //
+        // Setup: simulate the user adding "X" to the opening tag and the
+        // mirror writing "fooX" to the closing tag.
+        let text = Rope::from("<foo></foo>");
+        // User inserts "X" at position 4 (end of opening tag name).
+        let user_change =
+            Transaction::change(&text, [(4, 4, Some(Tendril::from("X")))].into_iter());
+        let mut ranges = vec![Range::new(1, 4), Range::new(7, 10)];
+
+        // Stage 1: process the user's edit.
+        let active_idx = rebase_linked_ranges(&mut ranges, user_change.changes());
+        assert_eq!(active_idx, Some(0));
+        assert_eq!(ranges[0], Range::new(1, 5));
+        assert_eq!(ranges[1], Range::new(8, 11));
+
+        // Compute the active text and build the mirror transaction the same
+        // way apply_linked_edits does.
+        let mut after_user = text.clone();
+        let _ = user_change.apply(&mut after_user);
+        let active_text = after_user
+            .slice(ranges[0].from()..ranges[0].to())
+            .to_string();
+        let sibling = ranges[1];
+        let mirror_change = Transaction::change(
+            &after_user,
+            [(sibling.from(), sibling.to(), Some(Tendril::from(active_text.as_str())))].into_iter(),
+        );
+
+        // Stage 2: process the mirror's own transaction (the hook runs again
+        // with suppress=true but update_ranges still mutates state.ranges).
+        update_ranges(&mut ranges, mirror_change.changes());
+
+        // The sibling range should now cover the post-mirror "fooX" in the
+        // closing tag, NOT collapse to zero-width past the end of the tag.
+        assert_eq!(
+            ranges[1].to() - ranges[1].from(),
+            active_text.chars().count(),
+            "sibling range width should match the mirrored text after the mirror's own update",
+        );
+    }
 }
