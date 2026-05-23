@@ -75,34 +75,6 @@ inherit language-server config from. An earlier, narrower take on the
 same problem `add-global-language-config` solves more directly.
 
 
-## lsp-linked-editing
-
-**Origin:** upstream PR
-[helix-editor/helix#15441](https://github.com/helix-editor/helix/pull/15441)
-by matoous.
-
-LSP `textDocument/linkedEditingRange` support. When the cursor sits
-inside a range the server marks as linked (the canonical case is a JSX
-or HTML tag pair), edits to one range are mirrored across the others.
-Cancels in-flight requests per view and buffers edits made before the
-server response arrives, then rebases them onto the resolved ranges.
-
-Enabled by `editor.lsp.linked-editing`. Server restart required after
-toggling.
-
-**Local integration notes.** The PR added `enable_linked_editing: bool`
-as a fifth argument to `helix_lsp::Registry::get`. Two call sites in
-`helix-view/src/editor.rs` had to be updated to pass
-`config.lsp.linked_editing`: the main one (which `lsp-path-remapping-v2`
-also touches via the `resolve_client_lookup` helper closure) and the
-`__common__` pseudo-language one (which `add-global-language-config`
-introduces). The first showed up as a textual merge conflict; the
-second auto-merged but would not compile without the extra argument.
-Resolution kept `resolve_client_lookup` rather than the PR's inline
-error-handling `match`, since the helper is the established pattern in
-daily-driver.
-
-
 ## yank-history
 
 **Origin:** mine; an earlier shape of this also lives upstream as my own
