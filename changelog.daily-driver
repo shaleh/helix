@@ -75,6 +75,22 @@ inherit language-server config from. An earlier, narrower take on the
 same problem `add-global-language-config` solves more directly.
 
 
+## lsp-linked-editing
+
+**Origin:** upstream PR
+[helix-editor/helix#15441](https://github.com/helix-editor/helix/pull/15441)
+by matoous.
+
+LSP `textDocument/linkedEditingRange` support. When the cursor sits
+inside a range the server marks as linked (the canonical case is a JSX
+or HTML tag pair), edits to one range are mirrored across the others.
+Cancels in-flight requests per view and buffers edits made before the
+server response arrives, then rebases them onto the resolved ranges.
+
+Enabled by `editor.lsp.linked-editing`. Server restart required after
+toggling.
+
+
 ## yank-history
 
 **Origin:** mine; an earlier shape of this also lives upstream as my own
