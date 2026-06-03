@@ -138,3 +138,22 @@ Recursion through alias chains is bounded at depth 8. Positional
 placeholders (`%arg{N}`) and the inline-table form (`[commands.":foo"]`
 with `desc`/`accepts`/`completer`) are rejected at config load — these
 are the pieces of upstream #12320 this fork deliberately omits.
+
+
+## slawomirlech/fix/dap-stdio-terminal-corruption
+
+**Origin:**
+[helix-editor/helix#15593](https://github.com/helix-editor/helix/pull/15593)
+by slawomirlech — tracked directly from their fork (remote `slawomirlech`,
+branch `fix/dap-stdio-terminal-corruption`)
+
+Spawns DAP adapters in their own session (`setsid()` in a `pre_exec` hook)
+so a debuggee that seizes the controlling terminal can't background the
+editor. debugpy's launcher unconditionally `tcsetpgrp`'s `/dev/tty` even
+with `console:"internalConsole"` — where the debuggee's stdio is already
+piped, so the grab is pointless — which moved the terminal's foreground
+group to the debuggee and left Helix backgrounded / SIGTTOU'd at every
+breakpoint (the long-standing "Helix freezes/crashes at a breakpoint"
+symptom). With no controlling terminal the adapter's `open("/dev/tty")`
+fails and the grab no-ops, so the editor stays in the foreground and
+`<space>G v`/`n` work in direct (non-mux) debugging.
