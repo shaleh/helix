@@ -157,3 +157,10 @@ breakpoint (the long-standing "Helix freezes/crashes at a breakpoint"
 symptom). With no controlling terminal the adapter's `open("/dev/tty")`
 fails and the grab no-ops, so the editor stays in the foreground and
 `<space>G v`/`n` work in direct (non-mux) debugging.
+
+## dap-execution-arrow-focus
+
+**Origin:**
+mine
+
+Fix for DAP moves not moving Helix's gutter elements.
