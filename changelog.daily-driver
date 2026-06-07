@@ -164,3 +164,10 @@ fails and the grab no-ops, so the editor stays in the foreground and
 mine
 
 Fix for DAP moves not moving Helix's gutter elements.
+
+## dap-remote-template
+
+**Origin:**
+mine
+
+Support remote entries in debug template
