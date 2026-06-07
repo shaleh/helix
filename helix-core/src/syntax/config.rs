@@ -471,11 +471,24 @@ pub enum DebugConfigCompletion {
     Advanced(AdvancedCompletion),
 }
 
+/// Whether selecting a template connects to an already-running adapter
+/// over TCP or spawns one. A socket address connects to that fixed
+/// address. The bool true connects but prompts for the address first.
+/// Absent or false spawns the adapter the way the config describes.
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", untagged)]
+pub enum Remote {
+    Fixed(std::net::SocketAddr),
+    Prompt(bool),
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct DebugTemplate {
     pub name: String,
     pub request: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<Remote>,
     #[serde(default)]
     pub completion: Vec<DebugConfigCompletion>,
     pub args: HashMap<String, Value>,
@@ -649,4 +662,52 @@ where
 
 fn default_timeout() -> u64 {
     20
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_template_remote_states() {
+        let local: DebugTemplate = toml::from_str(
+            r#"name = "binary"
+               request = "launch"
+               args = {}"#,
+        )
+        .unwrap();
+        assert_eq!(local.remote, None);
+
+        let fixed: DebugTemplate = toml::from_str(
+            r#"name = "remote"
+               request = "launch"
+               remote = "127.0.0.1:5679"
+               args = {}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            fixed.remote,
+            Some(Remote::Fixed("127.0.0.1:5679".parse().unwrap()))
+        );
+
+        let prompt: DebugTemplate = toml::from_str(
+            r#"name = "remote"
+               request = "attach"
+               remote = true
+               args = {}"#,
+        )
+        .unwrap();
+        assert_eq!(prompt.remote, Some(Remote::Prompt(true)));
+    }
+
+    #[test]
+    fn debug_template_remote_malformed_address_fails() {
+        let result: Result<DebugTemplate, _> = toml::from_str(
+            r#"name = "remote"
+               request = "launch"
+               remote = "not-an-address"
+               args = {}"#,
+        );
+        assert!(result.is_err());
+    }
 }
