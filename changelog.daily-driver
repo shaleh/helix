@@ -162,3 +162,10 @@ Fix for DAP moves not moving Helix's gutter elements.
 mine
 
 Support remote entries in debug template
+
+## lsp-debug-logging
+
+**Origin:**
+mine
+
+Add even more LSP logging to help debug issues.
