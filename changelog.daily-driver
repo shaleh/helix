@@ -66,15 +66,6 @@ there apply to every language without having to be repeated per-language.
 per-language entry for the same server wins over the global one.
 
 
-## define-common-language
-
-**Origin:** mine.
-
-Defines a special `__common__` pseudo-language that other languages can
-inherit language-server config from. An earlier, narrower take on the
-same problem `add-global-language-config` solves more directly.
-
-
 ## yank-history
 
 **Origin:** mine; an earlier shape of this also lives upstream as my own
