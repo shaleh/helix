@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+#
+# Rebase every feature branch listed under '## <branch-name>' headings in
+# changelog.daily-driver onto a fresh upstream/master, one at a time. Stops
+# on the first conflict so you can resolve it by hand, then resumes from
+# where it left off.
+#
+# This is the companion to bin/rebuild-daily-driver. That script assembles
+# the daily-driver branch from the feature branches. This one keeps the
+# feature branches themselves current with upstream so the assembly stays
+# clean and rebasable.
+#
+# Default: show which branches are current and which need a rebase, then
+# exit. Need --sync to actually rebase, --continue to resume after you
+# resolved a conflict.
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: bin/sync-feature-branches [--sync | --continue]
+
+  (no flag)    Show which branches are current and which need rebasing;
+               do not modify anything.
+  --sync       Fetch upstream/master, then rebase each branch listed in
+               changelog.daily-driver onto it, in order.
+  --continue   Resume after a rebase conflict. Picks up at the first
+               branch that does not yet contain upstream/master. Use this
+               AFTER you resolved conflicts and ran 'git rebase --continue'.
+EOF
+}
+
+MODE="dry-run"  # dry-run | sync | continue
+for arg in "$@"; do
+    case "$arg" in
+        --sync)      MODE="sync" ;;
+        --continue)  MODE="continue" ;;
+        -h|--help)   usage; exit 0 ;;
+        *) echo "unknown arg: $arg" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+GIT_DIR=$(git rev-parse --git-dir)
+
+UPSTREAM="upstream/master"
+
+# Branches listed in the changelog, in document order. The parsing lives in
+# bin/daily-driver-branches so this and the rebuild script stay in agreement.
+BRANCH_LIST=$("$ROOT/bin/daily-driver-branches")
+BRANCHES=()
+while IFS= read -r b; do
+    BRANCHES+=("$b")
+done <<<"$BRANCH_LIST"
+
+# A branch is current when upstream/master is already one of its ancestors,
+# meaning it carries everything in upstream. After a fetch this is only true
+# for branches we have already rebased this run, which is what lets
+# --continue skip past them.
+is_current() {
+    git merge-base --is-ancestor "$UPSTREAM" "$1" 2>/dev/null
+}
+
+# Refuse to touch anything while a rebase is half-done. The advice differs
+# by mode: on continue we want the rebase finished, otherwise aborted.
+if [[ -d "$GIT_DIR/rebase-merge" || -d "$GIT_DIR/rebase-apply" ]]; then
+    echo "error: a rebase is already in progress" >&2
+    case "$MODE" in
+        continue) echo "       resolve conflicts and 'git rebase --continue' first" >&2 ;;
+        *)        echo "       finish it, or 'git rebase --abort', before syncing" >&2 ;;
+    esac
+    exit 1
+fi
+
+# Verify each listed branch exists locally — refuse to start otherwise.
+MISSING=()
+for b in "${BRANCHES[@]}"; do
+    git rev-parse --verify "$b" >/dev/null 2>&1 || MISSING+=("$b")
+done
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+    echo "error: branch(es) listed in changelog but missing locally:" >&2
+    for b in "${MISSING[@]}"; do echo "  - $b" >&2; done
+    exit 1
+fi
+
+if ! git rev-parse --verify "$UPSTREAM" >/dev/null 2>&1; then
+    if [[ "$MODE" == "dry-run" ]]; then
+        echo "note: $UPSTREAM not fetched yet; --sync will fetch it first"
+    else
+        echo "error: $UPSTREAM not resolvable; can't sync" >&2
+        exit 1
+    fi
+fi
+
+if [[ "$MODE" == "dry-run" ]]; then
+    echo "Plan: rebase each branch onto $UPSTREAM, in order:"
+    for b in "${BRANCHES[@]}"; do
+        if is_current "$b"; then
+            echo "  - $b (current)"
+        else
+            echo "  - $b (needs rebase)"
+        fi
+    done
+    echo
+    echo "Status is against the currently fetched $UPSTREAM. --sync fetches first."
+    echo "Dry run. Pass --sync to execute."
+    exit 0
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo "error: working tree not clean; commit or stash first" >&2
+    exit 1
+fi
+
+# Remember where we started so we can land back here when we finish.
+STARTING_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+if [[ "$MODE" == "sync" ]]; then
+    echo "==> fetching $UPSTREAM"
+    git fetch upstream master
+fi
+
+for b in "${BRANCHES[@]}"; do
+    if is_current "$b"; then
+        echo "==> $b already current, skipping"
+        continue
+    fi
+    echo "==> rebasing $b onto $UPSTREAM"
+    if ! git rebase "$UPSTREAM" "$b"; then
+        cat >&2 <<EOF
+
+Rebase of '$b' hit conflicts.
+
+Next steps:
+  1. Resolve conflicts in the listed files.
+  2. Stage the fixes:       git add <files>
+  3. Continue the rebase:   git rebase --continue
+  4. Resume the sync:       bin/sync-feature-branches --continue
+
+To abandon this branch's rebase and stop:
+                            git rebase --abort
+EOF
+        exit 1
+    fi
+done
+
+# Land back on the branch we started from. Best effort — say so if it is gone.
+if git rev-parse --verify "$STARTING_BRANCH" >/dev/null 2>&1; then
+    git checkout --quiet "$STARTING_BRANCH"
+fi
+
+echo "Done. All branches current with $UPSTREAM."

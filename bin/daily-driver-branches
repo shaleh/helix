@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# Print the feature branches tracked in changelog.daily-driver, one per
+# line, in the order they appear. Each '## <branch-name>' heading is one
+# branch. bin/rebuild-daily-driver and bin/sync-feature-branches both read
+# the list from here so the parsing lives in exactly one place.
+
+set -euo pipefail
+
+ROOT=$(git rev-parse --show-toplevel)
+CHANGELOG="$ROOT/changelog.daily-driver"
+[[ -f "$CHANGELOG" ]] || { echo "missing $CHANGELOG" >&2; exit 1; }
+
+branches=$(grep -E '^## [^[:space:]]+$' "$CHANGELOG" | sed 's/^## //')
+
+if [[ -z "$branches" ]]; then
+    echo "no '## <branch>' entries in $CHANGELOG" >&2
+    exit 1
+fi
+
+printf '%s\n' "$branches"
