@@ -48,7 +48,9 @@ UPSTREAM="upstream/master"
 
 # Branches listed in the changelog, in document order. The parsing lives in
 # bin/daily-driver-branches so this and the rebuild script stay in agreement.
-BRANCH_LIST=$("$ROOT/bin/daily-driver-branches")
+# Only our own branches get synced. Upstream contributors' branches carry a
+# namespace prefix and aren't ours to rebase.
+BRANCH_LIST=$("$ROOT/bin/daily-driver-branches" --mine)
 BRANCHES=()
 while IFS= read -r b; do
     BRANCHES+=("$b")
