@@ -44,19 +44,13 @@ done
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 
-CHANGELOG="changelog.daily-driver"
-[[ -f "$CHANGELOG" ]] || { echo "missing $CHANGELOG" >&2; exit 1; }
-
-# Branches listed in the changelog, in document order.
+# Branches listed in the changelog, in document order. The parsing lives in
+# bin/daily-driver-branches so this and the sync script stay in agreement.
+BRANCH_LIST=$("$ROOT/bin/daily-driver-branches")
 BRANCHES=()
 while IFS= read -r b; do
     BRANCHES+=("$b")
-done < <(grep -E '^## [^[:space:]]+$' "$CHANGELOG" | sed 's/^## //')
-
-if [[ ${#BRANCHES[@]} -eq 0 ]]; then
-    echo "no '## <branch>' entries in $CHANGELOG" >&2
-    exit 1
-fi
+done <<<"$BRANCH_LIST"
 
 contains() {
     local needle="$1"; shift
