@@ -2402,9 +2402,38 @@ fn reflow(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
     let rope = doc.text();
 
     let selection = doc.selection(view.id);
+    let loader = cx.editor.syn_loader.load();
     let transaction = Transaction::change_by_selection(rope, selection, |range| {
-        let fragment = range.fragment(rope.slice(..));
-        let reflowed_text = helix_core::wrap::reflow_hard_wrap(&fragment, text_width);
+        let text = rope.slice(..);
+        let cursor = doc.selection(view.id).primary().cursor(text);
+        let byte = text.char_to_byte(cursor) as u32;
+
+        // The language's comment markers will be used to help detect paragraph boundaries.
+        //
+        // /*
+        //  * Foo ......
+        //  * Bar....
+        //  *
+        //  * More....
+        //  * Still more....
+        //  */
+        //
+        // Should flow as two paragraphs. Passing in the comment tokens helps differentiate that otherwise
+        // empty and paragraph delimiting line.
+        let comment_tokens = doc
+            .language_config_at(&loader, byte as usize)
+            .and_then(|config| config.comment_tokens.as_deref())
+            .unwrap_or(&[]);
+        let mut comment_tokens: Vec<&str> = comment_tokens.iter().map(|x| x.as_str()).collect();
+        comment_tokens.sort_unstable_by_key(|x| std::cmp::Reverse(x.len()));
+
+        let fragment = range.fragment(text);
+        let reflowed_text = helix_core::wrap::reflow_region(
+            &fragment,
+            &comment_tokens,
+            doc.line_ending,
+            text_width,
+        );
 
         (range.from(), range.to(), Some(reflowed_text))
     });
