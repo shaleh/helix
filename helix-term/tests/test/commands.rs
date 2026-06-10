@@ -1048,6 +1048,71 @@ selected
     ))
     .await?;
 
+    // A line that already fits within the width is left untouched.
+    test((
+        "#[|hello world]#",
+        ":reflow 80<ret>",
+        "#[|hello world]#",
+    ))
+    .await?;
+
+    // Text with no trailing newline is left alone when it fits.
+    test((
+        "#[|hello, world]#",
+        ":reflow 80<ret>",
+        "#[|hello, world]#",
+    ))
+    .await?;
+
+    // A blank line between two paragraphs is preserved.
+    test((
+        "#[|alpha beta\n\ngamma delta]#",
+        ":reflow 80<ret>",
+        "#[|alpha beta\n\ngamma delta]#",
+    ))
+    .await?;
+
+    // A whitespace-only line is a valid separator and survives verbatim.
+    test((
+        "#[|alpha\n    \nbeta]#",
+        ":reflow 80<ret>",
+        "#[|alpha\n    \nbeta]#",
+    ))
+    .await?;
+
+    // A bare comment leader between two one-word comment lines is preserved.
+    test((
+        "#[|// a\n//\n// b]#",
+        ":lang rust<ret>:reflow 80<ret>",
+        "#[|// a\n//\n// b]#",
+    ))
+    .await?;
+
+    // The longest matching comment token is used to compute the prefix.
+    test((
+        "#[|/// doc here]#",
+        ":lang rust<ret>:reflow 80<ret>",
+        "#[|/// doc here]#",
+    ))
+    .await?;
+
+    // A comment line that already fits is kept while the next line wraps under
+    // the same comment prefix.
+    test((
+        "#[|  // one two\n  // three four five six]#",
+        ":lang rust<ret>:reflow 12<ret>",
+        "#[|  // one two\n  // three\n  // four\n  // five\n  // six]#",
+    ))
+    .await?;
+
+    // Reflowing already-wrapped text is a no-op.
+    test((
+        "#[|wrapping should only modify the lines that are currently selected]#",
+        ":reflow 11<ret>:reflow 11<ret>",
+        "#[|wrapping\nshould only\nmodify the\nlines that\nare\ncurrently\nselected]#",
+    ))
+    .await?;
+
     Ok(())
 }
 

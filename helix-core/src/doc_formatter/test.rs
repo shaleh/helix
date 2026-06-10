@@ -211,3 +211,26 @@ fn annotation_and_overlay() {
         "fooo  bar "
     );
 }
+
+#[test]
+fn reflow_inserts_crlf_breaks_for_crlf_documents() {
+    use crate::doc_formatter::{reflow, ReflowOpts};
+    use crate::{LineEnding, Rope, Transaction};
+
+    let rope = Rope::from("alpha beta gamma\r\ndelta epsilon zeta\r\n");
+    let opts = ReflowOpts {
+        width: 11,
+        line_ending: LineEnding::Crlf,
+        comment_tokens: &[],
+    };
+
+    let changes = reflow(rope.slice(..), 0, &opts);
+    let transaction = Transaction::change(&rope, changes.into_iter());
+    let mut doc = rope.clone();
+    assert!(transaction.apply(&mut doc));
+
+    assert_eq!(
+        doc.to_string(),
+        "alpha beta\r\ngamma\r\ndelta\r\nepsilon\r\nzeta\r\n"
+    );
+}
