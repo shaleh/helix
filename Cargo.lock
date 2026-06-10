@@ -1371,7 +1371,7 @@ dependencies = [
  "tree-house",
  "unicode-general-category",
  "unicode-segmentation",
- "unicode-width 0.1.12",
+ "unicode-width",
 ]
 
 [[package]]
