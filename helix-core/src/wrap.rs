@@ -1,5 +1,3 @@
-use log::trace;
-use regex::Regex;
 use smartstring::{LazyCompact, SmartString};
 use textwrap::{self, Options, WordSplitter::NoHyphenation};
 
@@ -20,7 +18,7 @@ pub fn reflow_region(
         .map(|segment| match segment {
             Segment::Paragraph(paragraph) => reflow_hard_wrap(
                 paragraph,
-                &prefix,
+                prefix,
                 make_textwrap_lineending(line_ending),
                 width,
             ),
@@ -30,7 +28,8 @@ pub fn reflow_region(
 
     let line_ending_str = line_ending.as_str();
     // The paragraphs have had all of their line endings stripped before being wrapped. Now it is
-    // time to add them back. Uses LineEnding so Windows is properly handld.
+    // time to add them back. Uses LineEnding so Windows is properly handled.
+    // This mouthful of code is `intersperse`.
     let result: SmartString<LazyCompact> = pieces
         .into_iter()
         .flat_map(|item| std::iter::once(line_ending_str.into()).chain(std::iter::once(item)))
@@ -44,7 +43,7 @@ pub fn reflow_region(
 // prefix is the indentation before the original paragraph. Comment syntax is part of that indentation.
 fn reflow_hard_wrap(
     text: &str,
-    prefix: &Option<&str>,
+    prefix: Option<&str>,
     line_ending: textwrap::LineEnding,
     text_width: usize,
 ) -> SmartString<LazyCompact> {
@@ -58,8 +57,8 @@ fn reflow_hard_wrap(
 }
 
 // Turn Helix LineEnding into TextWrap's LineEnding.
-fn make_textwrap_lineending(le: LineEnding) -> textwrap::LineEnding {
-    match le {
+fn make_textwrap_lineending(line_ending: LineEnding) -> textwrap::LineEnding {
+    match line_ending {
         LineEnding::Crlf => textwrap::LineEnding::CRLF,
         _ => textwrap::LineEnding::LF,
     }
@@ -74,25 +73,25 @@ enum Segment<'a> {
     Separator(&'a str),
 }
 
+// A prefix is leading whitespace, an optional prefix which is usually a comment marker, and an optional
+// trailing space or tab.
 fn compute_prefix<'a>(prefixes: &'a [&str], text: &'a str) -> Option<&'a str> {
+    let indent_length = text.len() - text.trim_start().len();
+    let trimmed = &text[indent_length..];
+
     for p in prefixes {
-        // TODO: Really? Does it have to be a regex here? Or maybe Regex is the best option.
-        // Question. Does that single trailing space cover files using tabs?
-        match Regex::new(&format!(r"^\s*{p} ")) {
-            Ok(regex) => {
-                if let Some(needle) = regex.find(text) {
-                    return Some(&text[needle.range()]);
-                }
-            }
-            Err(err) => {
-                // FIXME: trace better!
-                trace!("Failed to generate regex {err}");
-                continue;
-            }
+        if let Some(rest) = trimmed.strip_prefix(p) {
+            let space = rest.starts_with([' ', '\t']) as usize;
+            let end = indent_length + p.len() + space;
+            return Some(&text[..end]);
         }
     }
 
-    None
+    if indent_length > 0 {
+        Some(&text[..indent_length])
+    } else {
+        None
+    }
 }
 
 // Text after the prefix has been stripped off.
@@ -106,7 +105,22 @@ fn without_prefix<'a>(text: &'a str, prefix: Option<&str>) -> &'a str {
     text
 }
 
-// Comment syntqx aware version of textwrap::unfill().
+fn is_separator(prefix: Option<&str>, line: &str) -> bool {
+    // without_prefix enforces the trailing space which breaks the case of an otherwise empty line
+    // that starts with a comment marker.
+    //
+    // This handles cases where the line:
+    //  - starts with the prefix exactly
+    //  - starts with the prefix but does not have the trailing space
+    //  - does not start with the prefix at all
+    let trimmed = prefix
+        .and_then(|prefix| line.strip_prefix(prefix.trim_end()))
+        .unwrap_or(line);
+
+    trimmed.is_empty() || is_all_whitespace(trimmed)
+}
+
+// Comment syntax aware version of textwrap::unfill().
 //
 // This tries to break up existing paragraphs and transform them into flat collections of sentences
 // in preparation for being split up again by textwrap::fill(). The secret sauce here is comment
@@ -117,24 +131,25 @@ fn unfill<'a>(
     comment_tokens: &'a [&str],
     line_ending: &str,
 ) -> (Vec<Segment<'a>>, Option<&'a str>) {
-    let mut segments = Vec::new();
+    let prefix = if let Some(initial) = text.split(line_ending).next() {
+        // Assume the leading prefix is the uniform prefix to apply.
+        compute_prefix(comment_tokens, initial)
+    } else {
+        None
+    };
 
-    // Assume the leading prefix is the uniform prefix to apply.
-    let prefix = compute_prefix(comment_tokens, text);
+    let mut segments = Vec::new();
     let mut paragraph = Vec::new();
 
-    for line in text
-        .split(line_ending)
-        .map(|line| without_prefix(line, prefix))
-    {
-        if line.is_empty() || is_all_whitespace(line) {
+    for line in text.split(line_ending) {
+        if is_separator(prefix, line) {
             if !paragraph.is_empty() {
                 segments.push(Segment::Paragraph(paragraph.join(" ")));
                 paragraph.clear();
             }
             segments.push(Segment::Separator(line));
         } else {
-            paragraph.push(line);
+            paragraph.push(without_prefix(line, prefix));
         }
     }
     // Wrap up the final paragraph.
@@ -247,6 +262,30 @@ mod tests {
         assert_eq!(
             reflow_region("a\r\nb\r\n", &[], LineEnding::Crlf, 80).as_str(),
             "a b\r\n"
+        );
+    }
+
+    #[test]
+    fn two_one_word_paragraphs() {
+        assert_eq!(
+            reflow_region("// a\n//\n// b", &["//"], LineEnding::LF, 80).as_str(),
+            "// a\n//\n// b"
+        );
+    }
+
+    #[test]
+    fn indent_is_preserved_in_non_comment_paragraphs() {
+        assert_eq!(
+            reflow_region("    foo bar\n    baz", &[], LineEnding::LF, 80).as_str(),
+            "    foo bar baz"
+        );
+    }
+
+    #[test]
+    fn prefix_needs_longest_first() {
+        assert_eq!(
+            reflow_region("/// doc here\n", &["///", "//"], LineEnding::LF, 80).as_str(),
+            "/// doc here\n"
         );
     }
 }
