@@ -511,6 +511,16 @@ pub mod completers {
             .collect()
     }
 
+    pub fn case_format(_editor: &Editor, input: &str) -> Vec<Completion> {
+        let names = helix_core::case_conversion::IDENTIFIER_CASE_NAMES
+            .iter()
+            .copied();
+        fuzzy_match(input, names, false)
+            .into_iter()
+            .map(|(name, _)| ((0..), Span::raw(name.to_string())))
+            .collect()
+    }
+
     pub fn setting(_editor: &Editor, input: &str) -> Vec<Completion> {
         static KEYS: Lazy<Vec<String>> = Lazy::new(|| {
             let mut keys = Vec::new();
