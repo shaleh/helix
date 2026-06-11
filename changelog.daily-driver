@@ -156,7 +156,7 @@ with `desc`/`accepts`/`completer`) are rejected at config load — these
 are the pieces of upstream #12320 this fork deliberately omits.
 
 
-## slawomirlech/fix/dap-stdio-terminal-corruption
+## fix/dap-stdio-terminal-corruption
 
 **Origin:**
 [helix-editor/helix#15593](https://github.com/helix-editor/helix/pull/15593)
