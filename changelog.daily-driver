@@ -213,3 +213,12 @@ mine
 Plugin/script: yes
 
 :to-case will convert into the specified form. camel, pascal, snake, kebab.
+
+## split-paragraphs
+
+**Origin:**
+mine
+
+Plugin/script: yes
+
+:split-paragraphs is a more ergonomic form of 'S' and then getting the regex correct to select empty lines.
