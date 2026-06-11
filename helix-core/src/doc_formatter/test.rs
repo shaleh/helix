@@ -214,7 +214,7 @@ fn annotation_and_overlay() {
 
 #[test]
 fn reflow_inserts_crlf_breaks_for_crlf_documents() {
-    use crate::doc_formatter::{reflow, ReflowOpts};
+    use crate::doc_formatter::{reflow, ReflowMode, ReflowOpts};
     use crate::{LineEnding, Rope, Transaction};
 
     let rope = Rope::from("alpha beta gamma\r\ndelta epsilon zeta\r\n");
@@ -222,6 +222,7 @@ fn reflow_inserts_crlf_breaks_for_crlf_documents() {
         width: 11,
         line_ending: LineEnding::Crlf,
         comment_tokens: &[],
+        mode: ReflowMode::Wrap,
     };
 
     let changes = reflow(rope.slice(..), 0, &opts);
@@ -232,5 +233,95 @@ fn reflow_inserts_crlf_breaks_for_crlf_documents() {
     assert_eq!(
         doc.to_string(),
         "alpha beta\r\ngamma\r\ndelta\r\nepsilon\r\nzeta\r\n"
+    );
+}
+
+#[test]
+fn reflow_collapses_space_run_at_break() {
+    use crate::doc_formatter::{reflow, ReflowMode, ReflowOpts};
+    use crate::{LineEnding, Rope, Transaction};
+
+    let opts = ReflowOpts {
+        width: 6,
+        line_ending: LineEnding::LF,
+        comment_tokens: &[],
+        mode: ReflowMode::Wrap,
+    };
+
+    // A run of spaces at the break point collapses into the single inserted break.
+    let rope = Rope::from("aaaa     bbbb");
+    let changes = reflow(rope.slice(..), 0, &opts);
+    let transaction = Transaction::change(&rope, changes.into_iter());
+    let mut doc = rope.clone();
+    assert!(transaction.apply(&mut doc));
+    assert_eq!(doc.to_string(), "aaaa\nbbbb");
+}
+
+// Reflow a whole fragment in fill mode and return the resulting text. Fill flows
+// each paragraph as a unit, joining its lines before rebreaking to the width.
+fn fill(input: &str, width: usize, line_ending: crate::LineEnding, comment_tokens: &[&str]) -> String {
+    use crate::doc_formatter::{reflow, ReflowMode, ReflowOpts};
+    use crate::{Rope, Transaction};
+
+    let tokens: Vec<String> = comment_tokens.iter().map(|t| t.to_string()).collect();
+    let opts = ReflowOpts {
+        width,
+        line_ending,
+        comment_tokens: &tokens,
+        mode: ReflowMode::Fill,
+    };
+    let rope = Rope::from(input);
+    let changes = reflow(rope.slice(..), 0, &opts);
+    let transaction = Transaction::change(&rope, changes.into_iter());
+    let mut doc = rope.clone();
+    assert!(transaction.apply(&mut doc));
+    doc.to_string()
+}
+
+#[test]
+fn fill_joins_two_lines_into_one_paragraph() {
+    use crate::LineEnding;
+    assert_eq!(fill("hello\nworld\n", 80, LineEnding::LF, &[]), "hello world\n");
+}
+
+#[test]
+fn fill_honors_crlf_when_joining() {
+    use crate::LineEnding;
+    assert_eq!(fill("a\r\nb\r\n", 80, LineEnding::Crlf, &[]), "a b\r\n");
+}
+
+#[test]
+fn fill_preserves_leading_indent_when_joining() {
+    use crate::LineEnding;
+    assert_eq!(
+        fill("    foo bar\n    baz", 80, LineEnding::LF, &[]),
+        "    foo bar baz"
+    );
+}
+
+#[test]
+fn fill_collapses_interword_tabs_and_runs() {
+    use crate::LineEnding;
+    assert_eq!(
+        fill("foo\tbar    baz", 80, LineEnding::LF, &[]),
+        "foo bar baz"
+    );
+}
+
+#[test]
+fn fill_joins_comment_lines_under_one_prefix() {
+    use crate::LineEnding;
+    assert_eq!(
+        fill("// hello\n// world", 80, LineEnding::LF, &["//"]),
+        "// hello world"
+    );
+}
+
+#[test]
+fn fill_rebreaks_joined_paragraph_to_width() {
+    use crate::LineEnding;
+    assert_eq!(
+        fill("hello\nworld\nfoo\nbar", 11, LineEnding::LF, &[]),
+        "hello world\nfoo bar"
     );
 }

@@ -7,7 +7,7 @@ use crate::job::Job;
 use super::*;
 
 use helix_core::command_line::{Args, Flag, Signature, Token, TokenKind};
-use helix_core::doc_formatter::ReflowOpts;
+use helix_core::doc_formatter::{ReflowMode, ReflowOpts};
 use helix_core::fuzzy::fuzzy_match;
 use helix_core::indent::MAX_INDENT;
 use helix_core::line_ending;
@@ -2383,6 +2383,19 @@ fn sort(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow:
 }
 
 fn reflow(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    reflow_impl(cx, args, event, ReflowMode::Wrap)
+}
+
+fn reflow_fill(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    reflow_impl(cx, args, event, ReflowMode::Fill)
+}
+
+fn reflow_impl(
+    cx: &mut compositor::Context,
+    args: Args,
+    event: PromptEvent,
+    mode: ReflowMode,
+) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
     }
@@ -2408,17 +2421,13 @@ fn reflow(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
             .language_config()
             .and_then(|config| config.comment_tokens.as_deref())
             .unwrap_or(&[]),
+        mode,
     };
 
-    let mut changes = Vec::new();
-    for selection in doc.selection(view.id) {
-        changes.append(&mut helix_core::doc_formatter::reflow(
-            rope.slice(..selection.to()),
-            selection.from(),
-            &opts,
-        ));
-    }
-    let transaction = Transaction::change(rope, changes.into_iter());
+    let changes = doc.selection(view.id).iter().flat_map(|selection| {
+        helix_core::doc_formatter::reflow(rope.slice(..selection.to()), selection.from(), &opts)
+    });
+    let transaction = Transaction::change(rope, changes);
 
     doc.apply(&transaction, view.id);
     doc.append_changes_to_history(view);
@@ -3782,6 +3791,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &[],
         doc: "Hard-wrap the current selection of lines to a given width.",
         fun: reflow,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(1)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "reflow-fill",
+        aliases: &[],
+        doc: "Hard-wrap the current selection of lines to a given width. Refill the paragraph to fit the space available.",
+        fun: reflow_fill,
         completer: CommandCompleter::none(),
         signature: Signature {
             positionals: (0, Some(1)),

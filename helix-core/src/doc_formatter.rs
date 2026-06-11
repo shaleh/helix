@@ -22,6 +22,7 @@ use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 use helix_stdx::rope::{RopeGraphemes, RopeSliceExt};
 
 use crate::graphemes::{Grapheme, GraphemeStr};
+use crate::line_ending::rope_end_without_line_ending;
 use crate::syntax::Highlight;
 use crate::text_annotations::TextAnnotations;
 use crate::{movement, Change, LineEnding, Position, RopeSlice, Tendril};
@@ -478,10 +479,22 @@ impl<'t> Iterator for DocumentFormatter<'t> {
     }
 }
 
+/// Whether reflow only breaks long lines or also joins lines within a paragraph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReflowMode {
+    /// Wrap each line on its own and never join. Existing line breaks are kept.
+    #[default]
+    Wrap,
+    /// Flow each paragraph as a unit. Lines that continue a paragraph are joined
+    /// before the paragraph is rebroken to fit the width.
+    Fill,
+}
+
 pub struct ReflowOpts<'a> {
     pub width: usize,
     pub line_ending: LineEnding,
     pub comment_tokens: &'a [String],
+    pub mode: ReflowMode,
 }
 
 impl ReflowOpts<'_> {
@@ -504,35 +517,56 @@ impl ReflowOpts<'_> {
     }
 }
 
-/// reflow wraps long lines in text to be less than opts.width.
+// A fixed tab width so reflow behaves the same across configurations.
+const REFLOW_TAB_WIDTH: u16 = 8;
+
+/// Reflow rewrites the text starting at `char_pos` to fit `opts.width`. In wrap
+/// mode it keeps existing line breaks and only splits lines that are too long. In
+/// fill mode it treats the region as a single paragraph, joining its lines before
+/// rebreaking to the width. Fill expects a single paragraph, so paragraph
+/// boundaries are the caller's job.
 pub fn reflow(text: RopeSlice, char_pos: usize, opts: &ReflowOpts) -> Vec<Change> {
-    // A constant so that reflow behaves consistently across
-    // different configurations.
-    const TAB_WIDTH: u16 = 8;
-
     let line_idx = text.char_to_line(char_pos.min(text.len_chars()));
-    let mut char_pos = text.line_to_char(line_idx);
+    let start = text.line_to_char(line_idx);
 
+    match opts.mode {
+        ReflowMode::Wrap => reflow_wrap(text, start, opts),
+        ReflowMode::Fill => reflow_fill(text, start, opts),
+    }
+}
+
+fn reflow_wrap(text: RopeSlice, start: usize, opts: &ReflowOpts) -> Vec<Change> {
+    let mut char_pos = start;
     let mut col = 0;
     let mut word_width = 0;
     let mut last_word_boundary = None;
     let mut changes = Vec::new();
+
     for grapheme in text.slice(char_pos..).graphemes() {
         let grapheme_chars = grapheme.len_chars();
-        let mut grapheme = Grapheme::new(GraphemeStr::from(Cow::from(grapheme)), col, TAB_WIDTH);
+        let mut grapheme = Grapheme::new(
+            GraphemeStr::from(Cow::from(grapheme)),
+            col,
+            REFLOW_TAB_WIDTH,
+        );
         if col + grapheme.width() > opts.width && !grapheme.is_whitespace() {
             if let Some(n) = last_word_boundary {
                 let indent = opts.find_indent(text.char_to_line(n), text);
-                let mut whitespace_start = n;
+                // The boundary always sits on the first space after a word, so the
+                // break only needs to reach forward over the rest of the run. Every
+                // space in that run is replaced by the inserted break. If a change
+                // ever lets a space sit before the boundary, that space is left
+                // behind and the scan has to walk backward again.
+                debug_assert!(
+                    n == 0 || text.char(n - 1) != ' ',
+                    "word boundary has a space before it; reflow must scan backward too"
+                );
                 let mut whitespace_end = n;
-                while whitespace_start > 0 && text.char(whitespace_start - 1) == ' ' {
-                    whitespace_start -= 1;
-                }
                 while whitespace_end < text.chars().len() && text.char(whitespace_end) == ' ' {
                     whitespace_end += 1;
                 }
                 changes.push((
-                    whitespace_start,
+                    n,
                     whitespace_end,
                     Some(Tendril::from(format!(
                         "{}{}",
@@ -543,12 +577,12 @@ pub fn reflow(text: RopeSlice, char_pos: usize, opts: &ReflowOpts) -> Vec<Change
 
                 col = 0;
                 for g in indent.graphemes() {
-                    let g = Grapheme::new(GraphemeStr::from(Cow::from(g)), col, TAB_WIDTH);
+                    let g = Grapheme::new(GraphemeStr::from(Cow::from(g)), col, REFLOW_TAB_WIDTH);
                     col += g.width();
                 }
                 col += word_width;
                 last_word_boundary = None;
-                grapheme.change_position(col, TAB_WIDTH);
+                grapheme.change_position(col, REFLOW_TAB_WIDTH);
             }
         }
         col += grapheme.width();
@@ -567,4 +601,85 @@ pub fn reflow(text: RopeSlice, char_pos: usize, opts: &ReflowOpts) -> Vec<Change
         char_pos += grapheme_chars;
     }
     changes
+}
+
+fn reflow_fill(text: RopeSlice, start: usize, opts: &ReflowOpts) -> Vec<Change> {
+    let end = text.len_chars();
+    if start >= end {
+        return Vec::new();
+    }
+
+    // A trailing line ending is the paragraph's own terminator, not inter-word
+    // whitespace, so keep it out of the rewrite.
+    let content_end = start + rope_end_without_line_ending(&text.slice(start..end));
+    if content_end <= start {
+        return Vec::new();
+    }
+
+    // The prefix of the first line leads every output line.
+    let first_line = text.char_to_line(start);
+    let prefix = Cow::from(opts.find_indent(first_line, text));
+    let prefix_width = str_width(&prefix);
+
+    // Walk the paragraph one word at a time and lay the words out greedily into a
+    // fresh buffer, never breaking a word. Each line drops its own prefix, and
+    // every run of whitespace, the joins between lines included, collapses to a
+    // single space.
+    let last_line = text.char_to_line(content_end - 1);
+    let mut result = Tendril::new();
+    result.push_str(&prefix);
+    let mut col = prefix_width;
+    let mut first_word = true;
+    for line_idx in first_line..=last_line {
+        let line = text.line(line_idx);
+        let line_prefix = opts.find_indent(line_idx, text).len_chars();
+        let content = Cow::from(line.slice(line_prefix.min(line.len_chars())..));
+        for word in content.split_whitespace() {
+            let word_width = str_width(word);
+            // Every word but the first is preceded by a separator, either a space while it
+            // still fits or a new line and the indent/comment prefix.
+            if first_word {
+                first_word = false;
+            } else if col + 1 + word_width <= opts.width {
+                result.push(' ');
+                col += 1;
+            } else {
+                result.push_str(opts.line_ending.as_str());
+                result.push_str(&prefix);
+                col = prefix_width;
+            }
+            result.push_str(word);
+            col += word_width;
+        }
+    }
+
+    // The flag is still set, so no word was ever emitted. The region held only a
+    // prefix or whitespace and there is nothing to rewrite.
+    if first_word {
+        return Vec::new();
+    }
+
+    // Fill rebuilds the whole paragraph as one replacement. On already-filled
+    // text that replacement equals the input, but applying it would still dirty
+    // the buffer and add an undo step for no visible change. Skip it when the
+    // rebuild matches the input.
+    if result.as_str() == Cow::from(text.slice(start..content_end)).as_ref() {
+        return Vec::new();
+    }
+
+    vec![(start, content_end, Some(result))]
+}
+
+// The display width of a string laid out from column zero, honoring tab stops.
+fn str_width(text: &str) -> usize {
+    let mut col = 0;
+    for grapheme in text.graphemes(true) {
+        let grapheme = Grapheme::new(
+            GraphemeStr::from(Cow::from(grapheme)),
+            col,
+            REFLOW_TAB_WIDTH,
+        );
+        col += grapheme.width();
+    }
+    col
 }
