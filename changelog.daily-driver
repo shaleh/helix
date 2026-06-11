@@ -11,6 +11,8 @@ on purpose: the script reappears immediately after the rebuild starts.
 
 **Origin:** mine.
 
+plug/script: Maybe. If there are sufficient hooks.
+
 `text` is defined as the fallback when no other language is detected. The
 point: LSPs configured against `text` (or against the global language —
 see `add-global-language-config`) then load for plain files with no
@@ -23,6 +25,8 @@ been set up yet.
 
 **Origin:** mine.
 
+plugin/script: Maybe. If there are enough hooks in place.
+
 Modeline support. Tries vi then emacs before falling back to the usual
 detection methods.
 
@@ -30,6 +34,9 @@ detection methods.
 ## blame-gutter
 
 **Origin:** mine.
+
+plugin/script: Likely. As long as new gutter types can be created. However, this leans on gitoxide so the
+plugin would still need to have Rust changes _or_ it would call out to git and not be as performant.
 
 Adds a `blame` entry to the gutter. Shows the hash and a relative date in
 minutes, hours, days, weeks, months, or years. `12h` is twelve hours old,
@@ -47,6 +54,8 @@ refreshes on save.
 (UseAfterFreee), which has been dormant since 2022. Different design — see
 below.
 
+plugin/script: Maybe. But means more plumbing has to exist.
+
 Path remapping for language servers, so an LSP can run in a container,
 over SSH, or anywhere else with a different filesystem layout than the
 editor. Implemented at the JSON-RPC transport layer: every outbound
@@ -60,6 +69,9 @@ shape.
 
 **Origin:** mine.
 
+plugin/script: Maybe. Could replicate the additions to all languages. Not sure if the mechanism I used
+would be available.
+
 Adds a `[global]` section to `languages.toml`. Language servers listed
 there apply to every language without having to be repeated per-language.
 `inherit-global-language-servers = false` opts a specific language out. A
@@ -70,6 +82,9 @@ per-language entry for the same server wins over the global one.
 
 **Origin:** mine; an earlier shape of this also lives upstream as my own
 [helix-editor/helix#10604](https://github.com/helix-editor/helix/pull/10604).
+
+plugin/script: Maybe. Would need to be able to hook into the yank/paste mechanism and store the data
+as well as generate the picker.
 
 Each register keeps a history of the last 10 yanks. A picker lets you
 search inside the history text — handy for moving paragraphs or whole
@@ -86,6 +101,9 @@ use the `_noyank` versions and only `y` actually yanks. `Alt-d` and
 
 **Origin:** mine.
 
+plugin/script: Maybe. This tweaks an existing thing. Not sure if plugins would have that power without needing
+to replace the whole thing.
+
 The changed-files picker sorts conflicted entries to the top and
 untracked entries to the bottom.
 
@@ -93,6 +111,8 @@ untracked entries to the bottom.
 ## theme-preview
 
 **Origin:** mine.
+
+plugin/script: Potential. If the data is all available and the ability to make a picker is too.
 
 `theme-preview` typable command. Opens a picker showing every theme
 element the system defines. Useful to scan a theme quickly, or to see
@@ -105,6 +125,8 @@ how a specific element renders.
 [helix-editor/helix#12320](https://github.com/helix-editor/helix/pull/12320)
 (RoloEdits). TOML shape matches the upstream PR so swapping to it later
 needs no config edits.
+
+Plugin/script: yes, scripted configs could support the same.
 
 User-defined typable command aliases in `config.toml`. Bind a name to one
 or more command lines:
@@ -149,23 +171,42 @@ symptom). With no controlling terminal the adapter's `open("/dev/tty")`
 fails and the grab no-ops, so the editor stays in the foreground and
 `<space>G v`/`n` work in direct (non-mux) debugging.
 
+
 ## dap-execution-arrow-focus
 
 **Origin:**
 mine
 
+Plugin/script: No. Bug fix.
+
 Fix for DAP moves not moving Helix's gutter elements.
+
 
 ## dap-remote-template
 
 **Origin:**
 mine
 
+Plugin/script: Maybe. Using the scripting to load custom config this could be done.
+
 Support remote entries in debug template
+
 
 ## lsp-debug-logging
 
 **Origin:**
 mine
 
+Plugin/script: no, this is real changes to add logging.
+
 Add even more LSP logging to help debug issues.
+
+
+## to-case
+
+**Origin:**
+mine
+
+Plugin/script: yes
+
+:to-case will convert into the specified form. camel, pascal, snake, kebab.
