@@ -2416,6 +2416,30 @@ fn reflow(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
     Ok(())
 }
 
+fn split_paragraphs(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let (view, doc) = current!(cx.editor);
+    let comment_tokens = doc
+        .language_config()
+        .and_then(|config| config.comment_tokens.as_deref())
+        .unwrap_or(&[]);
+    let selection = helix_core::selection::split_paragraphs(
+        doc.text().slice(..),
+        doc.selection(view.id),
+        comment_tokens,
+    );
+    doc.set_selection(view.id, selection);
+
+    Ok(())
+}
+
 fn tree_sitter_subtree(
     cx: &mut compositor::Context,
     _args: Args,
@@ -3774,6 +3798,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         completer: CommandCompleter::none(),
         signature: Signature {
             positionals: (0, Some(1)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "split-paragraphs",
+        aliases: &[],
+        doc: "Split the selection into one selection per paragraph, breaking on blank lines and bare comment leaders.",
+        fun: split_paragraphs,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
             ..Signature::DEFAULT
         },
     },
