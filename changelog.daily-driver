@@ -6,6 +6,19 @@ Carries this changelog and the `bin/rebuild-daily-driver` script so they
 survive a hard reset of daily-driver back to upstream/master. Listed first
 on purpose: the script reappears immediately after the rebuild starts.
 
+Order can matter here. Put the branches where they will conflict with each
+other and Helix the least. Not necessarily in order of addition.
+
+
+## modeline-support
+
+**Origin:** mine.
+
+plugin/script: Maybe. If there are enough hooks in place.
+
+Modeline support. Tries vi then emacs before falling back to the usual
+detection methods.
+
 
 ## text-fallback
 
@@ -19,16 +32,6 @@ see `add-global-language-config`) then load for plain files with no
 extension, for unknown new files, and so on. A spell-checker LSP
 configured this way picks up everywhere a more specific language hasn't
 been set up yet.
-
-
-## modeline-support
-
-**Origin:** mine.
-
-plugin/script: Maybe. If there are enough hooks in place.
-
-Modeline support. Tries vi then emacs before falling back to the usual
-detection methods.
 
 
 ## blame-gutter
