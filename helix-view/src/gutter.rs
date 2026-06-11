@@ -43,8 +43,8 @@ impl GutterType {
             GutterType::LineNumbers => {
                 line_numbers(editor, doc, view, theme, focus.view && focus.terminal)
             }
-            GutterType::Spacer => padding(editor, doc, view, theme, focus.view),
-            GutterType::Diff => diff(editor, doc, view, theme, focus.view),
+            GutterType::Spacer => padding(editor, doc, view, theme),
+            GutterType::Diff => diff(editor, doc, view, theme),
             GutterType::CodeActionHint => code_action_hint(editor, doc, view, theme, focus.view),
         }
     }
@@ -106,7 +106,6 @@ pub fn diff<'doc>(
     doc: &'doc Document,
     _view: &View,
     theme: &Theme,
-    _is_focused: bool,
 ) -> GutterFn<'doc> {
     let added = theme.get("diff.plus.gutter");
     let deleted = theme.get("diff.minus.gutter");
@@ -236,7 +235,6 @@ pub fn padding<'doc>(
     _doc: &'doc Document,
     _view: &View,
     _theme: &Theme,
-    _is_focused: bool,
 ) -> GutterFn<'doc> {
     Box::new(|_line: usize, _selected: bool, _first_visual_line: bool, _out: &mut String| None)
 }
