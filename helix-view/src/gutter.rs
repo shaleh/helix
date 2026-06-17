@@ -17,6 +17,19 @@ pub type GutterFn<'doc> = Box<dyn FnMut(usize, bool, bool, &mut String) -> Optio
 pub type Gutter =
     for<'doc> fn(&'doc Editor, &'doc Document, &View, &Theme, bool, usize) -> GutterFn<'doc>;
 
+/// The two kinds of focus a gutter renders against. They are kept apart
+/// because gutters weigh them differently. Line numbers go absolute when
+/// the window blurs. The debug gutter ignores focus entirely, so a stopped
+/// frame or a breakpoint set by a remote client shows up regardless of
+/// which view is focused or whether the window has focus at all.
+#[derive(Clone, Copy)]
+pub struct GutterFocus {
+    /// This view is the focused view within the editor.
+    pub view: bool,
+    /// The terminal window holds operating-system focus.
+    pub terminal: bool,
+}
+
 impl GutterType {
     pub fn style<'doc>(
         self,
@@ -24,16 +37,16 @@ impl GutterType {
         doc: &'doc Document,
         view: &View,
         theme: &Theme,
-        is_focused: bool,
+        focus: GutterFocus,
     ) -> GutterFn<'doc> {
         match self {
-            GutterType::Diagnostics => {
-                diagnostics_or_breakpoints(editor, doc, view, theme, is_focused)
+            GutterType::Diagnostics => diagnostics_or_breakpoints(editor, doc, view, theme),
+            GutterType::LineNumbers => {
+                line_numbers(editor, doc, view, theme, focus.view && focus.terminal)
             }
-            GutterType::LineNumbers => line_numbers(editor, doc, view, theme, is_focused),
-            GutterType::Spacer => padding(editor, doc, view, theme, is_focused),
-            GutterType::Diff => diff(editor, doc, view, theme, is_focused),
-            GutterType::Blame => blame(editor, doc, view, theme, is_focused),
+            GutterType::Spacer => padding(editor, doc, view, theme),
+            GutterType::Diff => diff(editor, doc, view, theme),
+            GutterType::Blame => blame(editor, doc, view, theme),
         }
     }
 
@@ -44,7 +57,13 @@ impl GutterType {
             GutterType::Spacer => 1,
             GutterType::Diff => 1,
             // "abc1234  3d" = 7 hash + space + age right-aligned to 3
-            GutterType::Blame => if doc.blame().is_some() { 11 } else { 0 },
+            GutterType::Blame => {
+                if doc.blame().is_some() {
+                    11
+                } else {
+                    0
+                }
+            }
         }
     }
 }
@@ -54,7 +73,6 @@ pub fn diagnostic<'doc>(
     doc: &'doc Document,
     _view: &View,
     theme: &Theme,
-    _is_focused: bool,
 ) -> GutterFn<'doc> {
     let warning = theme.get("warning");
     let error = theme.get("error");
@@ -96,7 +114,6 @@ pub fn diff<'doc>(
     doc: &'doc Document,
     _view: &View,
     theme: &Theme,
-    _is_focused: bool,
 ) -> GutterFn<'doc> {
     let added = theme.get("diff.plus.gutter");
     let deleted = theme.get("diff.minus.gutter");
@@ -213,7 +230,6 @@ pub fn blame<'doc>(
     doc: &'doc Document,
     _view: &View,
     theme: &Theme,
-    _is_focused: bool,
 ) -> GutterFn<'doc> {
     let blame_recent = theme
         .try_get("ui.gutter.blame.recent")
@@ -341,7 +357,6 @@ pub fn padding<'doc>(
     _doc: &'doc Document,
     _view: &View,
     _theme: &Theme,
-    _is_focused: bool,
 ) -> GutterFn<'doc> {
     Box::new(|_line: usize, _selected: bool, _first_visual_line: bool, _out: &mut String| None)
 }
@@ -351,7 +366,6 @@ pub fn breakpoints<'doc>(
     doc: &'doc Document,
     _view: &View,
     theme: &Theme,
-    _is_focused: bool,
 ) -> GutterFn<'doc> {
     let error = theme.get("error");
     let info = theme.get("info");
@@ -394,7 +408,6 @@ fn execution_pause_indicator<'doc>(
     editor: &'doc Editor,
     doc: &'doc Document,
     theme: &Theme,
-    is_focused: bool,
 ) -> GutterFn<'doc> {
     let style = theme.get("ui.debug.active");
     let current_stack_frame = editor.current_stack_frame();
@@ -411,11 +424,7 @@ fn execution_pause_indicator<'doc>(
 
     Box::new(
         move |line: usize, _selected: bool, first_visual_line: bool, out: &mut String| {
-            if !first_visual_line
-                || !is_focused
-                || line != frame_line?
-                || !should_display_for_current_doc
-            {
+            if !first_visual_line || line != frame_line? || !should_display_for_current_doc {
                 return None;
             }
 
@@ -431,11 +440,10 @@ pub fn diagnostics_or_breakpoints<'doc>(
     doc: &'doc Document,
     view: &View,
     theme: &Theme,
-    is_focused: bool,
 ) -> GutterFn<'doc> {
-    let mut diagnostics = diagnostic(editor, doc, view, theme, is_focused);
-    let mut breakpoints = breakpoints(editor, doc, view, theme, is_focused);
-    let mut execution_pause_indicator = execution_pause_indicator(editor, doc, theme, is_focused);
+    let mut diagnostics = diagnostic(editor, doc, view, theme);
+    let mut breakpoints = breakpoints(editor, doc, view, theme);
+    let mut execution_pause_indicator = execution_pause_indicator(editor, doc, theme);
 
     Box::new(move |line, selected, first_visual_line: bool, out| {
         execution_pause_indicator(line, selected, first_visual_line, out)
