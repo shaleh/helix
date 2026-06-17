@@ -2539,6 +2539,34 @@ fn reflow(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
     Ok(())
 }
 
+fn to_case(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let format = args.first().context("missing case format")?;
+    let case = format
+        .parse::<helix_core::case_conversion::IdentifierCase>()
+        .map_err(|e| anyhow!(e))?;
+
+    let scrolloff = cx.editor.config().scrolloff;
+    let (view, doc) = current!(cx.editor);
+    let rope = doc.text();
+
+    let selection = doc.selection(view.id);
+    let transaction = Transaction::change_by_selection(rope, selection, |range| {
+        let word = range.fragment(rope.slice(..));
+        let recased = helix_core::case_conversion::recase(&word, case);
+        (range.from(), range.to(), Some(recased))
+    });
+
+    doc.apply(&transaction, view.id);
+    doc.append_changes_to_history(view);
+    view.ensure_cursor_in_view(doc, scrolloff);
+
+    Ok(())
+}
+
 fn tree_sitter_subtree(
     cx: &mut compositor::Context,
     _args: Args,
@@ -3908,6 +3936,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         completer: CommandCompleter::none(),
         signature: Signature {
             positionals: (0, Some(1)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "to-case",
+        aliases: &["case"],
+        doc: "Convert each selection to the given identifier case: snake, screaming, kebab, camel, pascal, or title.",
+        fun: to_case,
+        completer: CommandCompleter::positional(&[completers::case_format]),
+        signature: Signature {
+            positionals: (1, Some(1)),
             ..Signature::DEFAULT
         },
     },
