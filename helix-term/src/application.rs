@@ -396,6 +396,17 @@ impl Application {
         // the configuration.
         self.editor.refresh_config(&old_editor_config);
 
+        // Back-fill blame when the gutter just turned on.
+        let was_blame_enabled =
+            crate::handlers::blame::blame_gutter_in_layout(&old_editor_config.gutters.layout);
+        let is_blame_enabled = crate::handlers::blame::blame_gutter_enabled(&self.editor);
+        if !was_blame_enabled && is_blame_enabled {
+            let doc_ids: Vec<_> = self.editor.documents().map(|doc| doc.id()).collect();
+            for doc_id in doc_ids {
+                crate::handlers::blame::request_blame(&mut self.editor, doc_id);
+            }
+        }
+
         // reset view position in case softwrap was enabled/disabled
         let scrolloff = self.editor.config().scrolloff;
         for (view, _) in self.editor.tree.views() {
@@ -601,6 +612,12 @@ impl Application {
         );
 
         doc.set_last_saved_revision(doc_save_event.revision, doc_save_event.save_time);
+
+        // Catches the case where a commit landed between this file's open
+        // and this save, e.g. via a sibling terminal.
+        if crate::handlers::blame::blame_gutter_enabled(&self.editor) {
+            crate::handlers::blame::request_blame(&mut self.editor, doc_save_event.doc_id);
+        }
 
         let lines = doc_save_event.text.len_lines();
         let size = doc_save_event.text.len_bytes();
