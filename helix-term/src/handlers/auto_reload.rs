@@ -154,6 +154,10 @@ fn handle_document_change(
     prompt_if_modified: bool,
 ) {
     let scrolloff = editor.config().scrolloff;
+    // Reload through a view the document is actually mounted in. The focused
+    // view may have no view data for a background document, which makes the
+    // reload transaction panic on a missing key.
+    let target_view_id = editor.get_synced_view_id(doc_id);
 
     let doc = doc_mut!(editor, &doc_id);
     let Some(path) = doc.path().map(|p| p.to_path_buf()) else {
@@ -185,7 +189,7 @@ fn handle_document_change(
             editor.set_warning(msg);
         }
     } else {
-        let view = view_mut!(editor);
+        let view = view_mut!(editor, target_view_id);
         match doc.reload(view, &editor.diff_providers) {
             Ok(_) => {
                 view.ensure_cursor_in_view(doc, scrolloff);
@@ -233,8 +237,9 @@ fn prompt_reload_modified(compositor: &mut Compositor, doc_id: DocumentId, path_
             match event {
                 PromptEvent::Validate => {
                     let scrolloff = cx.editor.config().scrolloff;
+                    let target_view_id = cx.editor.get_synced_view_id(doc_id);
                     let doc = doc_mut!(cx.editor, &doc_id);
-                    let view = view_mut!(cx.editor);
+                    let view = view_mut!(cx.editor, target_view_id);
                     match doc.reload(view, &cx.editor.diff_providers) {
                         Ok(_) => {
                             view.ensure_cursor_in_view(doc, scrolloff);
