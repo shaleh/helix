@@ -5,7 +5,7 @@ use crate::{
     ui::{self, overlay::overlaid, Picker, Popup, Prompt, PromptEvent, Text},
 };
 use dap::{StackFrame, Thread, ThreadStates};
-use helix_core::syntax::config::{DebugConfigCompletion, DebugTemplate};
+use helix_core::syntax::config::{DebugConfigCompletion, DebugTemplate, Remote};
 use helix_dap::{self as dap, requests::TerminateArguments};
 use helix_lsp::block_on;
 use helix_view::editor::Breakpoint;
@@ -265,25 +265,86 @@ pub fn dap_launch(cx: &mut Context) {
         templates,
         (),
         |cx, template, _action| {
-            if template.completion.is_empty() {
-                if let Err(err) = dap_start_impl(cx, Some(&template.name), None, None) {
-                    cx.editor.set_error(err.to_string());
+            let name = template.name.clone();
+            let completions = template.completion.clone();
+            match &template.remote {
+                None | Some(Remote::Prompt(false)) => {
+                    dap_start_or_prompt_params(cx, name, None, completions);
                 }
-            } else {
-                let completions = template.completion.clone();
-                let name = template.name.clone();
-                let callback = Box::pin(async move {
-                    let call: Callback =
-                        Callback::EditorCompositor(Box::new(move |_editor, compositor| {
-                            let prompt = debug_parameter_prompt(completions, name, Vec::new());
-                            compositor.push(Box::new(prompt));
-                        }));
-                    Ok(call)
-                });
-                cx.jobs.callback(callback);
+                Some(Remote::Fixed(socket)) => {
+                    dap_start_or_prompt_params(cx, name, Some(*socket), completions);
+                }
+                Some(Remote::Prompt(true)) => {
+                    let callback = Box::pin(async move {
+                        let call: Callback =
+                            Callback::EditorCompositor(Box::new(move |_editor, compositor| {
+                                compositor
+                                    .push(Box::new(dap_remote_address_prompt(name, completions)));
+                            }));
+                        Ok(call)
+                    });
+                    cx.jobs.callback(callback);
+                }
             }
         },
     ))));
+}
+
+/// Connect to a debug adapter listening at a TCP address chosen at pick
+/// time. The prompt opens empty and nothing is recalled. The typed
+/// address is what the session connects to. Once the address resolves the
+/// flow rejoins the normal start path, prompting for template parameters
+/// if the template declares any.
+fn dap_remote_address_prompt(
+    config_name: String,
+    completions: Vec<DebugConfigCompletion>,
+) -> Prompt {
+    Prompt::new(
+        "remote address: ".into(),
+        None,
+        ui::completers::none,
+        move |cx, input: &str, event: PromptEvent| {
+            if event != PromptEvent::Validate {
+                return;
+            }
+            let socket = match input.parse() {
+                Ok(socket) => socket,
+                Err(err) => {
+                    cx.editor
+                        .set_error(format!("Invalid remote address: {}", err));
+                    return;
+                }
+            };
+            dap_start_or_prompt_params(cx, config_name.clone(), Some(socket), completions.clone());
+        },
+    )
+}
+
+/// Either start the session now or collect template parameters first.
+/// A template with no completion fields starts immediately. One with
+/// fields hands off to a chain of parameter prompts that carries the same
+/// socket through to the start call.
+fn dap_start_or_prompt_params(
+    cx: &mut compositor::Context,
+    name: String,
+    socket: Option<std::net::SocketAddr>,
+    completions: Vec<DebugConfigCompletion>,
+) {
+    if completions.is_empty() {
+        if let Err(err) = dap_start_impl(cx, Some(&name), socket, None) {
+            cx.editor.set_error(err.to_string());
+        }
+    } else {
+        let callback = Box::pin(async move {
+            let call: Callback =
+                Callback::EditorCompositor(Box::new(move |_editor, compositor| {
+                    let prompt = debug_parameter_prompt(completions, name, socket, Vec::new());
+                    compositor.push(Box::new(prompt));
+                }));
+            Ok(call)
+        });
+        cx.jobs.callback(callback);
+    }
 }
 
 pub fn dap_restart(cx: &mut Context) {
@@ -319,6 +380,7 @@ pub fn dap_restart(cx: &mut Context) {
 fn debug_parameter_prompt(
     completions: Vec<DebugConfigCompletion>,
     config_name: String,
+    socket: Option<std::net::SocketAddr>,
     mut params: Vec<String>,
 ) -> Prompt {
     let completion = completions.get(params.len()).unwrap();
@@ -369,7 +431,8 @@ fn debug_parameter_prompt(
                 let callback = Box::pin(async move {
                     let call: Callback =
                         Callback::EditorCompositor(Box::new(move |_editor, compositor| {
-                            let prompt = debug_parameter_prompt(completions, config_name, params);
+                            let prompt =
+                                debug_parameter_prompt(completions, config_name, socket, params);
                             compositor.push(Box::new(prompt));
                         }));
                     Ok(call)
@@ -378,7 +441,7 @@ fn debug_parameter_prompt(
             } else if let Err(err) = dap_start_impl(
                 cx,
                 Some(&config_name),
-                None,
+                socket,
                 Some(params.iter().map(|x| x.into()).collect()),
             ) {
                 cx.editor.set_error(err.to_string());
