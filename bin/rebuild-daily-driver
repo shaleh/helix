@@ -59,6 +59,36 @@ contains() {
     return 1
 }
 
+# Predict which branches will conflict during the rebuild without touching the
+# working tree or any ref. Replays the same merge sequence in memory with
+# git merge-tree, folding each result into a throwaway commit so the next
+# branch is tested against the real stack state it would meet, not just against
+# master. Uses the same histogram diff option as the live merge so the
+# prediction matches what the rebuild will see. The only side effect is loose,
+# unreferenced objects, which git gc reclaims on its own.
+predict_conflicts() {
+    local base acc tree files b out clean=1
+    if ! base=$(git rev-parse --verify upstream/master 2>/dev/null); then
+        echo "Conflict prediction skipped: upstream/master not resolved locally."
+        return 0
+    fi
+    acc=$base
+    echo "Conflict prediction (against local upstream/master $(git rev-parse --short upstream/master)):"
+    for b in "${BRANCHES[@]}"; do
+        if out=$(git merge-tree --write-tree --name-only --no-messages \
+                    -X diff-algorithm=histogram "$acc" "$b" 2>/dev/null); then
+            printf '  %-40s ok\n' "$b"
+        else
+            clean=0
+            files=$(printf '%s\n' "$out" | tail -n +2 | paste -sd, -)
+            printf '  %-40s CONFLICT: %s\n' "$b" "$files"
+        fi
+        tree=$(printf '%s\n' "$out" | head -1)
+        acc=$(git commit-tree "$tree" -p "$acc" -p "$(git rev-parse "$b")" -m "sim $b")
+    done
+    [[ $clean -eq 1 ]] && echo "  all branches merge clean"
+}
+
 # Refuse to do anything if a merge is half-done. The error text differs
 # between modes — in continue we want the user to finish; in rebuild we
 # want them to abort first.
@@ -118,6 +148,8 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
 fi
 
 if [[ "$MODE" == "dry-run" ]]; then
+    echo
+    predict_conflicts
     echo
     echo "Dry run. Pass --rebuild to execute, --push to also publish."
     exit 0
@@ -188,7 +220,7 @@ for b in "${BRANCHES[@]}"; do
         continue
     fi
     echo "==> merging $b"
-    if ! git merge --no-ff -m "Merge branch '$b' into daily-driver" "$b"; then
+    if ! git merge --no-ff -X diff-algorithm=histogram -m "Merge branch '$b' into daily-driver" "$b"; then
         cat >&2 <<EOF
 
 Merge of '$b' hit conflicts.
