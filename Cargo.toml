@@ -73,3 +73,8 @@ repository = "https://github.com/helix-editor/helix"
 homepage = "https://helix-editor.com"
 license = "MPL-2.0"
 rust-version = "1.90"
+
+# Local fork carrying the macOS FSEvents backend plus fixes. The published
+# 0.2.2 only watches on Linux, so without this the watcher is inert on macOS.
+[patch.crates-io]
+filesentry = { git = "https://github.com/shaleh/filesentry", branch = "daily-driver" }
