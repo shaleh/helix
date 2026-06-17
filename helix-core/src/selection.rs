@@ -7,7 +7,7 @@ use crate::{
         ensure_grapheme_boundary_next, ensure_grapheme_boundary_prev, next_grapheme_boundary,
         prev_grapheme_boundary,
     },
-    line_ending::get_line_ending,
+    line_ending::{get_line_ending, line_end_char_index},
     movement::Direction,
     tree_sitter::Node,
     Assoc, ChangeSet, RopeSlice,
@@ -879,6 +879,69 @@ pub fn split_on_matches(text: RopeSlice, selection: &Selection, regex: &rope::Re
     Selection::new(result, 0)
 }
 
+/// A line is a paragraph separator when it carries no prose. That covers a blank
+/// line, a whitespace-only line, and a bare comment leader. A bare comment leader
+/// is leading whitespace, one of the comment tokens, then nothing but whitespace.
+fn is_separator_line(line: RopeSlice, comment_tokens: &[String]) -> bool {
+    let Some(first) = line.first_non_whitespace_char() else {
+        return true;
+    };
+    let rest = line.slice(first..);
+    comment_tokens.iter().any(|token| {
+        rest.starts_with(token)
+            && rest
+                .slice(token.chars().count()..)
+                .chars()
+                .all(|c| c.is_whitespace())
+    })
+}
+
+/// Splits each range into one range per paragraph, dropping the separator lines.
+/// Paragraphs are runs of lines separated by blank lines, whitespace-only lines,
+/// or bare comment leaders. Comment tokens come from the language so a bare `//`
+/// line breaks a paragraph the same way a blank line does. Splitting works on
+/// whole lines, so a range that starts or ends mid-line still yields whole-line
+/// paragraphs.
+pub fn split_paragraphs(
+    text: RopeSlice,
+    selection: &Selection,
+    comment_tokens: &[String],
+) -> Selection {
+    let mut result = SmallVec::new();
+
+    for sel in selection {
+        // A cursor has no lines to group, so leave it untouched.
+        if sel.from() == sel.to() {
+            result.push(*sel);
+            continue;
+        }
+
+        let first_line = text.char_to_line(sel.from());
+        let last_line = text.char_to_line(sel.to() - 1);
+
+        let mut paragraph_start = None;
+        for line in first_line..=last_line {
+            if is_separator_line(text.line(line), comment_tokens) {
+                if let Some(start) = paragraph_start.take() {
+                    result.push(Range::new(start, line_end_char_index(&text, line - 1)));
+                }
+            } else if paragraph_start.is_none() {
+                paragraph_start = Some(text.line_to_char(line));
+            }
+        }
+        if let Some(start) = paragraph_start {
+            result.push(Range::new(start, line_end_char_index(&text, last_line)));
+        }
+    }
+
+    // The selection held nothing but separators, so there is nothing to split.
+    if result.is_empty() {
+        return selection.clone();
+    }
+
+    Selection::new(result, 0)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1454,5 +1517,57 @@ mod test {
             vec!((1, 4), (7, 10)),
             vec!((1, 2), (3, 4), (7, 9))
         ));
+    }
+
+    fn split_paragraph_fragments(text: &str, comment_tokens: &[&str]) -> Vec<String> {
+        let rope = Rope::from(text);
+        let tokens: Vec<String> = comment_tokens.iter().map(|t| t.to_string()).collect();
+        let selection = Selection::single(0, rope.len_chars());
+        split_paragraphs(rope.slice(..), &selection, &tokens)
+            .fragments(rope.slice(..))
+            .map(|f| f.into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn split_paragraphs_on_blank_lines() {
+        assert_eq!(
+            split_paragraph_fragments("alpha\nbeta\n\ngamma\ndelta\n", &[]),
+            &["alpha\nbeta", "gamma\ndelta"]
+        );
+    }
+
+    #[test]
+    fn split_paragraphs_on_bare_comment_leaders() {
+        assert_eq!(
+            split_paragraph_fragments("// one two\n// three\n//\n// four five", &["//"]),
+            &["// one two\n// three", "// four five"]
+        );
+    }
+
+    #[test]
+    fn split_paragraphs_keeps_single_paragraph_whole() {
+        assert_eq!(
+            split_paragraph_fragments("// hello\n// world", &["//"]),
+            &["// hello\n// world"]
+        );
+    }
+
+    #[test]
+    fn split_paragraphs_treats_whitespace_only_line_as_separator() {
+        assert_eq!(
+            split_paragraph_fragments("alpha\n   \nbeta", &[]),
+            &["alpha", "beta"]
+        );
+    }
+
+    #[test]
+    fn split_paragraphs_tolerates_trailing_space_on_bare_leader() {
+        // The "// " separator carries a trailing space that a hand-written regex
+        // would have to remember. The predicate handles it.
+        assert_eq!(
+            split_paragraph_fragments("// a\n// \n// b", &["//"]),
+            &["// a", "// b"]
+        );
     }
 }
