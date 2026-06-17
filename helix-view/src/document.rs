@@ -1988,7 +1988,15 @@ impl Document {
     }
 
     pub fn supports_language_server(&self, id: LanguageServerId) -> bool {
-        self.language_servers().any(|l| l.id() == id)
+        let supported = self.language_servers().any(|l| l.id() == id);
+        log::trace!(
+            target: "lsp",
+            "doc {:?} supports server {:?}? {}",
+            self.path(),
+            id,
+            supported,
+        );
+        supported
     }
 
     pub fn diff_handle(&self) -> Option<&DiffHandle> {
@@ -2204,6 +2212,12 @@ impl Document {
         if let Some(lang_conf) = language_config {
             if let Some(severity) = severity {
                 if severity < lang_conf.diagnostic_severity {
+                    log::trace!(
+                        target: "lsp",
+                        "dropping diagnostic below severity threshold: {:?} < {:?}",
+                        severity,
+                        lang_conf.diagnostic_severity,
+                    );
                     return None;
                 }
             }

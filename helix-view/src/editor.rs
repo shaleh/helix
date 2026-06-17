@@ -1812,6 +1812,14 @@ impl Editor {
             return;
         }
 
+        log::debug!(
+            target: "lsp",
+            "resolved {} language server(s) for {:?}: {:?}",
+            language_servers.len(),
+            path,
+            language_servers.keys().collect::<Vec<_>>(),
+        );
+
         let language_id = doc.language_id().map(ToOwned::to_owned).unwrap_or_default();
 
         // only spawn new language servers if the servers aren't the same
@@ -1822,7 +1830,8 @@ impl Editor {
                     .is_none_or(|ls| ls.id() != doc_ls.id())
             });
 
-        for (_, language_server) in doc_language_servers_not_in_registry {
+        for (name, language_server) in doc_language_servers_not_in_registry {
+            log::debug!(target: "lsp", "closing document on stale server {name}");
             language_server.text_document_did_close(doc.identifier());
         }
 
@@ -1832,7 +1841,8 @@ impl Editor {
                 .is_none_or(|doc_ls| ls.id() != doc_ls.id())
         });
 
-        for (_, language_server) in language_servers_not_in_doc {
+        for (name, language_server) in language_servers_not_in_doc {
+            log::debug!(target: "lsp", "opening document on server {name}");
             // TODO: this now races with on_init code if the init happens too quickly
             language_server.text_document_did_open(
                 doc_url.clone(),
@@ -2331,6 +2341,7 @@ impl Editor {
             .uri()
             .and_then(|uri| diagnostics.get(&uri))
             .map(|diags| {
+                log::trace!(target: "lsp", "filtering {} incoming diagnostic(s)", diags.len());
                 diags.iter().filter_map(move |(diagnostic, provider)| {
                     let server_id = provider.language_server_id()?;
                     let ls = language_servers.get_by_id(server_id)?;
