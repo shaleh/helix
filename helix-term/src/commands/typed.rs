@@ -1602,7 +1602,7 @@ fn reload(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyh
             cx.editor
                 .language_servers
                 .file_event_handler
-                .file_changed(path.clone());
+                .file_changed(path.to_path_buf());
         }
     }
     Ok(())
@@ -1659,7 +1659,7 @@ fn reload_all(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> 
                 cx.editor
                     .language_servers
                     .file_event_handler
-                    .file_changed(path.clone());
+                    .file_changed(path.to_path_buf());
             }
         }
 
