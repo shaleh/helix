@@ -50,24 +50,6 @@ Honors `.git-blame-ignore-revs`. Respects unsaved buffer edits and
 refreshes on save.
 
 
-## lsp-path-remapping-v2
-
-**Origin:** mine; reimplementation of
-[helix-editor/helix#5204](https://github.com/helix-editor/helix/pull/5204)
-(UseAfterFreee), which has been dormant since 2022. Different design — see
-below.
-
-plugin/script: Maybe. But means more plumbing has to exist.
-
-Path remapping for language servers, so an LSP can run in a container,
-over SSH, or anywhere else with a different filesystem layout than the
-editor. Implemented at the JSON-RPC transport layer: every outbound
-message has URIs rewritten ToRemote and every inbound message ToLocal,
-walking the JSON for known URI field names. Supports multiple
-`PathMapping`s per server. See `book/src/languages.md` for the config
-shape.
-
-
 ## add-global-language-config
 
 **Origin:** mine.
@@ -222,3 +204,12 @@ mine
 Plugin/script: yes
 
 :split-paragraphs is a more ergonomic form of 'S' and then getting the regex correct to select empty lines.
+
+## filesentry-mac-master
+
+**Origin:**
+Pascal's work that I have updated and rebased. 5 9's of Pascal.
+
+Plugin/script: maybe
+
+Add support for watching file changes. Prompts if there are local changes and the underlying file changed.
