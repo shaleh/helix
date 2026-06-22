@@ -37,8 +37,16 @@ pub(crate) fn request_blame(editor: &mut Editor, doc_id: DocumentId) {
 
     let diff_providers = editor.diff_providers.clone();
 
+    let trust_full = editor
+        .workspace_trust
+        .query(
+            doc.workspace_root(),
+            helix_loader::workspace_trust::TrustQuery::Git,
+        )
+        .is_trusted();
     tokio::task::spawn(async move {
-        let blame = tokio::task::spawn_blocking(move || diff_providers.get_blame(&path)).await;
+        let blame =
+            tokio::task::spawn_blocking(move || diff_providers.get_blame(&path, trust_full)).await;
 
         if let Ok(Some(blame)) = blame {
             job::dispatch(move |editor, _| {

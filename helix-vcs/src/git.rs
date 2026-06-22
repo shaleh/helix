@@ -221,13 +221,13 @@ fn status(repo: &Repository, f: impl Fn(Result<FileChange>) -> bool) -> Result<(
     Ok(())
 }
 
-pub fn get_blame(file: &Path) -> Result<BlameResult> {
+pub fn get_blame(file: &Path, trust_full: bool) -> Result<BlameResult> {
     debug_assert!(!file.exists() || file.is_file());
     debug_assert!(file.is_absolute());
     let file = gix::path::realpath(file).context("resolve symlinks")?;
 
     let repo_dir = get_repo_dir(&file)?;
-    let repo = open_repo(repo_dir)
+    let repo = open_repo(repo_dir, trust_full)
         .context("failed to open git repo")?
         .to_thread_local();
     let head = repo.head_commit()?;

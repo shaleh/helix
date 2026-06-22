@@ -5,7 +5,6 @@
 use anyhow::{anyhow, bail, Result};
 use arc_swap::ArcSwap;
 use std::{
-    cell::RefCell,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -65,10 +64,10 @@ impl DiffProviderRegistry {
     }
 
     /// Get blame information for the given file.
-    pub fn get_blame(&self, file: &Path) -> Option<BlameResult> {
+    pub fn get_blame(&self, file: &Path, trust_full: bool) -> Option<BlameResult> {
         self.providers
             .iter()
-            .find_map(|provider| match provider.get_blame(file) {
+            .find_map(|provider| match provider.get_blame(file, trust_full) {
                 Ok(res) => Some(res),
                 Err(err) => {
                     log::debug!("{err:#?}");
@@ -132,10 +131,10 @@ impl DiffProvider {
         }
     }
 
-    fn get_blame(&self, file: &Path) -> Result<BlameResult> {
+    fn get_blame(&self, file: &Path, trust_full: bool) -> Result<BlameResult> {
         match self {
             #[cfg(feature = "git")]
-            Self::Git => git::get_blame(file),
+            Self::Git => git::get_blame(file, trust_full),
             Self::None => bail!("No blame support compiled in"),
         }
     }
