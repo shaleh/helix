@@ -70,10 +70,10 @@ impl DiffProviderRegistry {
     /// Get paths that need to be watched for VCS state changes.
     /// These are paths like HEAD files that indicate branch/commit changes.
     /// The workspace path is used to determine if the VCS metadata is external.
-    pub fn get_watched_paths(&self, workspace: &Path) -> Vec<PathBuf> {
+    pub fn get_watched_paths(&self, workspace: &Path, trust_full: bool) -> Vec<PathBuf> {
         self.providers
             .iter()
-            .filter_map(|provider| provider.get_watched_path(workspace))
+            .filter_map(|provider| provider.get_watched_path(workspace, trust_full))
             .collect()
     }
 
@@ -183,10 +183,10 @@ impl DiffProvider {
     }
 
     /// Get the path to watch for VCS state changes (e.g., HEAD file).
-    fn get_watched_path(&self, workspace: &Path) -> Option<PathBuf> {
+    fn get_watched_path(&self, workspace: &Path, trust_full: bool) -> Option<PathBuf> {
         match self {
             #[cfg(feature = "git")]
-            Self::Git => git::get_head_path(workspace),
+            Self::Git => git::get_head_path(workspace, trust_full),
             Self::None => None,
         }
     }

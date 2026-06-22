@@ -1472,6 +1472,9 @@ impl Editor {
 
         // Set up extra watched paths from VCS providers (e.g., external HEAD files for worktrees)
         let (workspace, _) = helix_loader::find_workspace();
+        let trust_full = workspace_trust
+            .query(&workspace, helix_loader::workspace_trust::TrustQuery::Git)
+            .is_trusted();
         let extra_paths = diff_providers.get_watched_paths(&workspace, trust_full);
         file_watcher.set_extra_watched_paths(extra_paths);
 
