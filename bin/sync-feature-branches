@@ -98,6 +98,28 @@ EOF
     exit 1
 }
 
+# The integration suite aborts with SIGABRT now and then for reasons that have
+# nothing to do with the branch under test. It passes on a rerun. Retry only
+# that case so one flake does not halt the whole sync. A genuine test failure
+# has no signal abort in its output, so it reports right away.
+INTEGRATION_ATTEMPTS=3
+run_integration_tests() {
+    local b="$1" attempt log
+    log=$(mktemp)
+    for ((attempt = 1; attempt <= INTEGRATION_ATTEMPTS; attempt++)); do
+        if cargo integration-test 2>&1 | tee "$log"; then
+            rm -f "$log"
+            return 0
+        fi
+        if ! grep -q "SIGABRT" "$log"; then
+            break
+        fi
+        echo "==> $b: integration tests aborted with SIGABRT (attempt $attempt of $INTEGRATION_ATTEMPTS); retrying" >&2
+    done
+    rm -f "$log"
+    report_check_failure "$b" "integration tests"
+}
+
 # Run the full gate on whatever branch is currently checked out. Clippy
 # matches CI and fails on warnings. Integration tests run through the cargo
 # alias so they pick up the integration feature and profile. A clean release
@@ -109,7 +131,7 @@ validate_branch() {
     echo "==> $b: tests"
     cargo test --workspace || report_check_failure "$b" "tests"
     echo "==> $b: integration tests"
-    cargo integration-test || report_check_failure "$b" "integration tests"
+    run_integration_tests "$b"
     echo "==> $b: release build"
     HELIX_DEFAULT_RUNTIME="$RUNTIME_DIR" cargo build --release || report_check_failure "$b" "release build"
 }
