@@ -10,9 +10,13 @@
 # feature branches themselves current with upstream so the assembly stays
 # clean and rebasable.
 #
+# After each branch rebases it gets validated: clippy clean, tests pass
+# including the integration suite, and a release build succeeds. A branch
+# is only considered done once it both rebases and passes all of that.
+#
 # Default: show which branches are current and which need a rebase, then
 # exit. Need --sync to actually rebase, --continue to resume after you
-# resolved a conflict.
+# resolved a conflict or fixed a failed check.
 
 set -euo pipefail
 
@@ -23,10 +27,13 @@ Usage: bin/sync-feature-branches [--sync | --continue]
   (no flag)    Show which branches are current and which need rebasing;
                do not modify anything.
   --sync       Fetch upstream/master, then rebase each branch listed in
-               changelog.daily-driver onto it, in order.
-  --continue   Resume after a rebase conflict. Picks up at the first
-               branch that does not yet contain upstream/master. Use this
-               AFTER you resolved conflicts and ran 'git rebase --continue'.
+               changelog.daily-driver onto it, in order. After each rebase,
+               validate the branch: clippy, tests, integration tests, and a
+               release build. Stops on the first conflict or failed check.
+  --continue   Resume after a rebase conflict or a failed check. Picks up at
+               the first branch not yet recorded as done. For a conflict,
+               run 'git rebase --continue' first. For a failed check, fix it
+               on the branch first.
 EOF
 }
 
@@ -45,6 +52,16 @@ cd "$ROOT"
 GIT_DIR=$(git rev-parse --git-dir)
 
 UPSTREAM="upstream/master"
+RUNTIME_DIR="$HOME/.local/share/helix/runtime"
+
+# Branches that have rebased and passed every check this run. Resume reads
+# this instead of asking whether a branch contains upstream. A branch that
+# rebased cleanly but failed a check already contains upstream, so going by
+# ancestry alone would skip the one branch we still need to retry.
+DONE_FILE="$GIT_DIR/sync-feature-branches.done"
+
+is_done() { [[ -f "$DONE_FILE" ]] && grep -qxF "$1" "$DONE_FILE"; }
+mark_done() { echo "$1" >>"$DONE_FILE"; }
 
 # Branches listed in the changelog, in document order. The parsing lives in
 # bin/daily-driver-branches so this and the rebuild script stay in agreement.
@@ -62,6 +79,39 @@ done <<<"$BRANCH_LIST"
 # --continue skip past them.
 is_current() {
     git merge-base --is-ancestor "$UPSTREAM" "$1" 2>/dev/null
+}
+
+# Stop the run when a branch fails a check. The branch is rebased but not
+# recorded as done, so --continue comes straight back to it after a fix.
+report_check_failure() {
+    local branch="$1" check="$2"
+    cat >&2 <<EOF
+
+Branch '$branch' failed: $check.
+
+The rebase landed, but '$branch' does not pass $check yet.
+
+Next steps:
+  1. Fix it on '$branch' (amend or add a commit).
+  2. Resume the sync:   bin/sync-feature-branches --continue
+EOF
+    exit 1
+}
+
+# Run the full gate on whatever branch is currently checked out. Clippy
+# matches CI and fails on warnings. Integration tests run through the cargo
+# alias so they pick up the integration feature and profile. A clean release
+# build with the runtime path is the last gate.
+validate_branch() {
+    local b="$1"
+    echo "==> $b: clippy"
+    cargo clippy --workspace --all-targets -- -D warnings || report_check_failure "$b" "clippy"
+    echo "==> $b: tests"
+    cargo test --workspace || report_check_failure "$b" "tests"
+    echo "==> $b: integration tests"
+    cargo integration-test || report_check_failure "$b" "integration tests"
+    echo "==> $b: release build"
+    HELIX_DEFAULT_RUNTIME="$RUNTIME_DIR" cargo build --release || report_check_failure "$b" "release build"
 }
 
 # Refuse to touch anything while a rebase is half-done. The advice differs
@@ -105,6 +155,9 @@ if [[ "$MODE" == "dry-run" ]]; then
         fi
     done
     echo
+    echo "Each branch is also validated after rebase: clippy, tests,"
+    echo "integration tests, and a release build."
+    echo
     echo "Status is against the currently fetched $UPSTREAM. --sync fetches first."
     echo "Dry run. Pass --sync to execute."
     exit 0
@@ -121,16 +174,24 @@ STARTING_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [[ "$MODE" == "sync" ]]; then
     echo "==> fetching $UPSTREAM"
     git fetch upstream master
+    # Fresh run, so forget what an earlier run had marked done.
+    rm -f "$DONE_FILE"
 fi
 
 for b in "${BRANCHES[@]}"; do
-    if is_current "$b"; then
-        echo "==> $b already current, skipping"
+    if is_done "$b"; then
+        echo "==> $b already done this run, skipping"
         continue
     fi
-    echo "==> rebasing $b onto $UPSTREAM"
-    if ! git rebase "$UPSTREAM" "$b"; then
-        cat >&2 <<EOF
+    # A branch can already carry upstream and still be unvalidated. That is
+    # exactly the resume case after a conflict was finished by hand. Skip the
+    # rebase then, but still run the checks before calling it done.
+    if is_current "$b"; then
+        echo "==> $b already current, skipping rebase"
+    else
+        echo "==> rebasing $b onto $UPSTREAM"
+        if ! git rebase "$UPSTREAM" "$b"; then
+            cat >&2 <<EOF
 
 Rebase of '$b' hit conflicts.
 
@@ -143,13 +204,19 @@ Next steps:
 To abandon this branch's rebase and stop:
                             git rebase --abort
 EOF
-        exit 1
+            exit 1
+        fi
     fi
+    validate_branch "$b"
+    mark_done "$b"
 done
+
+# Every branch rebased and passed, so the marker has done its job.
+rm -f "$DONE_FILE"
 
 # Land back on the branch we started from. Best effort — say so if it is gone.
 if git rev-parse --verify "$STARTING_BRANCH" >/dev/null 2>&1; then
     git checkout --quiet "$STARTING_BRANCH"
 fi
 
-echo "Done. All branches current with $UPSTREAM."
+echo "Done. All branches current with $UPSTREAM and passing checks."
