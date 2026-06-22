@@ -237,6 +237,8 @@ To abandon and start fresh:
 EOF
         exit 1
     fi
+
+    cargo clippy || exit 1
 done
 
 if [[ $PUSH -eq 1 ]]; then
