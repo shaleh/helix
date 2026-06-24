@@ -213,3 +213,12 @@ Pascal's work that I have updated and rebased. 5 9's of Pascal.
 Plugin/script: maybe
 
 Add support for watching file changes. Prompts if there are local changes and the underlying file changed.
+
+## document-color-display-modes
+
+**Origin:**
+mine
+
+Plugin/script: maybe
+
+Replace color swatch with document-color. Supports the old swatch and now foreground or off.
