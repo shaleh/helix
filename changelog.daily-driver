@@ -222,3 +222,12 @@ mine
 Plugin/script: maybe
 
 Replace color swatch with document-color. Supports the old swatch and now foreground or off.
+
+## lsp-workspace-edit-transactional
+
+**Origin:**
+mine
+
+Plugin/script: unlikely
+
+Implement a transaction system for WorkspaceEdit.
