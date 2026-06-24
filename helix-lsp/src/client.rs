@@ -611,7 +611,7 @@ impl Client {
                             lsp::ResourceOperationKind::Rename,
                             lsp::ResourceOperationKind::Delete,
                         ]),
-                        failure_handling: Some(lsp::FailureHandlingKind::Abort),
+                        failure_handling: Some(lsp::FailureHandlingKind::TextOnlyTransactional),
                         normalizes_line_endings: Some(false),
                         change_annotation_support: None,
                     }),
