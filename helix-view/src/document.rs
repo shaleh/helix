@@ -216,11 +216,11 @@ pub struct Document {
 
     pub previous_diagnostic_ids: HashMap<LanguageServerId, String>,
 
-    /// Annotations for LSP document color swatches
-    pub color_swatches: Option<DocumentColorSwatches>,
+    /// LSP document colors and their derived swatch annotations
+    pub document_colors: Option<DocumentColors>,
     /// Cached LSP document links for navigation (e.g. goto_file).
     pub document_links: Vec<DocumentLink>,
-    // NOTE: ideally this would live on the handler for color swatches. This is blocked on a
+    // NOTE: ideally this would live on the handler for document colors. This is blocked on a
     // large refactor that would make `&mut Editor` available on the `DocumentDidChange` event.
     pub color_swatch_controller: TaskController,
     /// Per-view task controllers for canceling in-flight document highlight requests.
@@ -237,10 +237,15 @@ pub struct Document {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct DocumentColorSwatches {
-    pub color_swatches: Vec<InlineAnnotation>,
+pub struct DocumentColors {
+    /// Char range of each color literal, sorted by start, parallel to `colors`.
+    pub ranges: Vec<std::ops::Range<usize>>,
+    /// RGB foreground highlight per range, parallel to `ranges`.
     pub colors: Vec<syntax::Highlight>,
-    pub color_swatches_padding: Vec<InlineAnnotation>,
+    /// Swatch glyph annotations at each range start, used in swatch mode.
+    pub swatch_markers: Vec<InlineAnnotation>,
+    /// Padding-space annotations at each range start, used in swatch mode.
+    pub swatch_padding: Vec<InlineAnnotation>,
 }
 
 /// Highlight ranges returned by LSP `textDocument/documentHighlight` for a view.
@@ -767,7 +772,7 @@ impl Document {
             jump_labels: HashMap::new(),
             document_highlights: HashMap::new(),
             code_action_hints: HashSet::new(),
-            color_swatches: None,
+            document_colors: None,
             document_links: Vec::new(),
             color_swatch_controller: TaskController::new(),
             document_highlight_controllers: HashMap::new(),

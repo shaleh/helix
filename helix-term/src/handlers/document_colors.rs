@@ -5,7 +5,8 @@ use helix_core::{syntax::config::LanguageServerFeature, text_annotations::Inline
 use helix_event::{cancelable_future, register_hook};
 use helix_lsp::lsp;
 use helix_view::{
-    document::DocumentColorSwatches,
+    document::DocumentColors,
+    editor::DocumentColorDisplay,
     events::{DocumentDidChange, DocumentDidOpen, LanguageServerExited, LanguageServerInitialized},
     handlers::{lsp::DocumentColorsEvent, Handlers},
     DocumentId, Editor, Theme,
@@ -42,7 +43,7 @@ impl helix_event::AsyncHook for DocumentColorsHandler {
 }
 
 fn request_document_colors(editor: &mut Editor, doc_id: DocumentId) {
-    if !editor.config().lsp.display_color_swatches {
+    if editor.config().lsp.document_color == DocumentColorDisplay::Off {
         return;
     }
 
@@ -68,12 +69,17 @@ fn request_document_colors(editor: &mut Editor, doc_id: DocumentId) {
                     .await?
                     .into_iter()
                     .filter_map(|color_info| {
-                        let pos = helix_lsp::util::lsp_pos_to_pos(
+                        let start = helix_lsp::util::lsp_pos_to_pos(
                             &text,
                             color_info.range.start,
                             offset_encoding,
                         )?;
-                        Some((pos, color_info.color))
+                        let end = helix_lsp::util::lsp_pos_to_pos(
+                            &text,
+                            color_info.range.end,
+                            offset_encoding,
+                        )?;
+                        Some((start..end, color_info.color))
                     })
                     .collect();
                 anyhow::Ok(colors)
@@ -103,9 +109,9 @@ fn request_document_colors(editor: &mut Editor, doc_id: DocumentId) {
 fn attach_document_colors(
     editor: &mut Editor,
     doc_id: DocumentId,
-    mut doc_colors: Vec<(usize, lsp::Color)>,
+    mut doc_colors: Vec<(std::ops::Range<usize>, lsp::Color)>,
 ) {
-    if !editor.config().lsp.display_color_swatches {
+    if editor.config().lsp.document_color == DocumentColorDisplay::Off {
         return;
     }
 
@@ -114,19 +120,21 @@ fn attach_document_colors(
     };
 
     if doc_colors.is_empty() {
-        doc.color_swatches.take();
+        doc.document_colors.take();
         return;
     }
 
-    doc_colors.sort_by_key(|(pos, _)| *pos);
+    doc_colors.sort_by(|(a, _), (b, _)| a.start.cmp(&b.start));
 
-    let mut color_swatches = Vec::with_capacity(doc_colors.len());
-    let mut color_swatches_padding = Vec::with_capacity(doc_colors.len());
+    let mut ranges = Vec::with_capacity(doc_colors.len());
     let mut colors = Vec::with_capacity(doc_colors.len());
+    let mut swatch_markers = Vec::with_capacity(doc_colors.len());
+    let mut swatch_padding = Vec::with_capacity(doc_colors.len());
 
-    for (pos, color) in doc_colors {
-        color_swatches_padding.push(InlineAnnotation::new(pos, " "));
-        color_swatches.push(InlineAnnotation::new(pos, "■"));
+    for (range, color) in doc_colors {
+        swatch_padding.push(InlineAnnotation::new(range.start, " "));
+        swatch_markers.push(InlineAnnotation::new(range.start, "■"));
+        ranges.push(range);
         colors.push(Theme::rgb_highlight(
             (color.red * 255.) as u8,
             (color.green * 255.) as u8,
@@ -134,10 +142,11 @@ fn attach_document_colors(
         ));
     }
 
-    doc.color_swatches = Some(DocumentColorSwatches {
-        color_swatches,
+    doc.document_colors = Some(DocumentColors {
+        ranges,
         colors,
-        color_swatches_padding,
+        swatch_markers,
+        swatch_padding,
     });
 }
 
@@ -151,9 +160,9 @@ pub(super) fn register_hooks(handlers: &Handlers) {
 
     let tx = handlers.document_colors.clone();
     register_hook!(move |event: &mut DocumentDidChange<'_>| {
-        // Update the color swatch' positions, helping ensure they are displayed in the
-        // proper place.
-        let apply_color_swatch_changes = |annotations: &mut Vec<InlineAnnotation>| {
+        // Keep stored positions aligned with the edit so colors stay on their literal
+        // between language-server refreshes.
+        let apply_annotation_changes = |annotations: &mut Vec<InlineAnnotation>| {
             event.changes.update_positions(
                 annotations
                     .iter_mut()
@@ -161,14 +170,24 @@ pub(super) fn register_hooks(handlers: &Handlers) {
             );
         };
 
-        if let Some(DocumentColorSwatches {
-            color_swatches,
+        if let Some(DocumentColors {
+            ranges,
             colors: _colors,
-            color_swatches_padding,
-        }) = &mut event.doc.color_swatches
+            swatch_markers,
+            swatch_padding,
+        }) = &mut event.doc.document_colors
         {
-            apply_color_swatch_changes(color_swatches);
-            apply_color_swatch_changes(color_swatches_padding);
+            apply_annotation_changes(swatch_markers);
+            apply_annotation_changes(swatch_padding);
+
+            event
+                .changes
+                .update_positions(ranges.iter_mut().flat_map(|range| {
+                    [
+                        (&mut range.start, helix_core::Assoc::After),
+                        (&mut range.end, helix_core::Assoc::Before),
+                    ]
+                }));
         }
 
         // Avoid re-requesting document colors if the change is a ghost transaction (completion)
@@ -194,10 +213,10 @@ pub(super) fn register_hooks(handlers: &Handlers) {
     });
 
     register_hook!(move |event: &mut LanguageServerExited<'_>| {
-        // Clear and re-request all color swatches when a server exits.
+        // Clear and re-request all document colors when a server exits.
         for doc in event.editor.documents_mut() {
             if doc.supports_language_server(event.server_id) {
-                doc.color_swatches.take();
+                doc.document_colors.take();
             }
         }
 

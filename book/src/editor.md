@@ -172,7 +172,7 @@ The following statusline elements can be configured:
 | `auto-document-highlight` | Automatically highlight symbol references at the cursor | `false` |
 | `display-inlay-hints` | Display inlay hints[^2]                                     | `false` |
 | `inlay-hints-length-limit` | Maximum displayed length (non-zero number) of inlay hints | Unset by default  |
-| `display-color-swatches` | Show color swatches next to colors | `true` |
+| `document-color` | How LSP document colors are shown: `swatch` draws a colored glyph before the literal, `foreground` paints the literal itself in its color, `off` disables it. Foreground colors close to the background can be hard to read. | `swatch` |
 | `display-signature-help-docs` | Display docs under signature help popup             | `true`  |
 | `snippets`      | Enables snippet completions. Requires a server restart (`:lsp-restart`) to take effect after `:config-reload`/`:set`. | `true`  |
 | `goto-reference-include-declaration` | Include declaration in the goto references popup. | `true`  |

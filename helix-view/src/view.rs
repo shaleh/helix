@@ -1,8 +1,8 @@
 use crate::{
     align_view,
     annotations::diagnostics::InlineDiagnostics,
-    document::{DocumentColorSwatches, DocumentInlayHints},
-    editor::{GutterConfig, GutterType},
+    document::{DocumentColors, DocumentInlayHints},
+    editor::{DocumentColorDisplay, GutterConfig, GutterType},
     graphics::Rect,
     handlers::diagnostics::DiagnosticsHandler,
     Align, Document, DocumentId, Theme, ViewId,
@@ -493,19 +493,20 @@ impl View {
         };
         let config = doc.config.load();
 
-        if config.lsp.display_color_swatches {
-            if let Some(DocumentColorSwatches {
-                color_swatches,
+        if config.lsp.document_color == DocumentColorDisplay::Swatch {
+            if let Some(DocumentColors {
                 colors,
-                color_swatches_padding,
-            }) = &doc.color_swatches
+                swatch_markers,
+                swatch_padding,
+                ranges: _ranges,
+            }) = &doc.document_colors
             {
-                for (color_swatch, color) in color_swatches.iter().zip(colors) {
+                for (swatch_marker, color) in swatch_markers.iter().zip(colors) {
                     text_annotations
-                        .add_inline_annotations(std::slice::from_ref(color_swatch), Some(*color));
+                        .add_inline_annotations(std::slice::from_ref(swatch_marker), Some(*color));
                 }
 
-                text_annotations.add_inline_annotations(color_swatches_padding, None);
+                text_annotations.add_inline_annotations(swatch_padding, None);
             }
         }
 

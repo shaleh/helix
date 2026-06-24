@@ -622,6 +622,8 @@ pub fn get_terminal_provider() -> Option<TerminalConfig> {
 pub struct LspConfig {
     /// Enables LSP
     pub enable: bool,
+    /// How to present LSP document colors
+    pub document_color: DocumentColorDisplay,
     /// Display LSP messagess from $/progress below statusline
     pub display_progress_messages: bool,
     /// Display LSP messages from window/showMessage below statusline
@@ -637,8 +639,6 @@ pub struct LspConfig {
     /// Maximum displayed length of inlay hints (excluding the added trailing `…`).
     /// If it's `None`, there's no limit
     pub inlay_hints_length_limit: Option<NonZeroU8>,
-    /// Display document color swatches
-    pub display_color_swatches: bool,
     /// Whether to enable snippet support
     pub snippets: bool,
     /// Whether to include declaration in the goto reference query
@@ -658,9 +658,22 @@ impl Default for LspConfig {
             inlay_hints_length_limit: None,
             snippets: true,
             goto_reference_include_declaration: true,
-            display_color_swatches: true,
+            document_color: DocumentColorDisplay::Swatch,
         }
     }
+}
+
+/// How LSP document colors are presented in the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DocumentColorDisplay {
+    /// A colored glyph inserted before the literal, drawn as virtual text.
+    #[default]
+    Swatch,
+    /// The color literal itself is painted in its color.
+    Foreground,
+    /// Document colors are neither requested nor rendered.
+    Off,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
