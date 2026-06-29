@@ -10,7 +10,7 @@ use helix_event::{dispatch, register_hook, send_blocking};
 use helix_view::editor::Config;
 use helix_view::events::ConfigDidChange;
 use helix_view::handlers::{AutoReloadEvent, Handlers};
-use helix_view::{DocumentId, Editor};
+use helix_view::{Document, DocumentId, Editor};
 use tokio::time::Instant;
 
 use crate::compositor::Compositor;
@@ -146,6 +146,18 @@ impl helix_event::AsyncHook for PollHandler {
     }
 }
 
+// After reload the buffer matches the file on disk, so tell the language
+// servers the file was saved. Servers like rust-analyzer only refresh
+// diagnostics on save, so otherwise stale errors linger over the new text.
+fn notify_language_servers_saved(doc: &Document) {
+    let identifier = doc.identifier();
+    for language_server in doc.language_servers() {
+        if language_server.is_initialized() {
+            language_server.text_document_did_save(identifier.clone(), doc.text());
+        }
+    }
+}
+
 /// Handler for document changes detected by filesentry or polling
 fn handle_document_change(
     editor: &mut Editor,
@@ -198,6 +210,7 @@ fn handle_document_change(
         match doc.reload(view, &editor.diff_providers, trust_full) {
             Ok(_) => {
                 view.ensure_cursor_in_view(doc, scrolloff);
+                notify_language_servers_saved(doc);
                 let msg = format!(
                     "{} reloaded (external changes)",
                     doc.relative_path().unwrap().display()
@@ -258,6 +271,7 @@ fn prompt_reload_modified(compositor: &mut Compositor, doc_id: DocumentId, path_
                     match doc.reload(view, &cx.editor.diff_providers, trust_full) {
                         Ok(_) => {
                             view.ensure_cursor_in_view(doc, scrolloff);
+                            notify_language_servers_saved(doc);
                             cx.editor.set_status(format!("{path_str} reloaded"));
                         }
                         Err(err) => {
