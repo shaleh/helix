@@ -157,6 +157,10 @@ pub struct View {
     pub last_modified_docs: [Option<DocumentId>; 2],
     /// used to store previous selections of tree-sitter objects
     pub object_selections: Vec<Selection>,
+    /// The most recent deliberately-made selection, remembered so it can be
+    /// replayed after navigation moves away from it. Carries the document it
+    /// belongs to so a replay never lands on the wrong buffer.
+    previous_selection: Option<(DocumentId, Selection)>,
     /// all gutter-related configuration settings, used primarily for gutter rendering
     pub gutters: GutterConfig,
     /// A mapping between documents and the last history revision the view was updated at.
@@ -194,6 +198,7 @@ impl View {
             docs_access_history: Vec::new(),
             last_modified_docs: [None, None],
             object_selections: Vec::new(),
+            previous_selection: None,
             gutters,
             doc_revisions: HashMap::new(),
             diagnostics_handler: DiagnosticsHandler::new(),
@@ -648,6 +653,9 @@ impl View {
 
     pub fn remove_document(&mut self, doc_id: &DocumentId) {
         self.jumps.remove(doc_id);
+        if matches!(&self.previous_selection, Some((id, _)) if id == doc_id) {
+            self.previous_selection = None;
+        }
         self.docs_access_history.retain(|doc| doc != doc_id);
     }
 
@@ -675,6 +683,23 @@ impl View {
     /// Applies a [`Transaction`] to the view.
     pub fn apply(&mut self, transaction: &Transaction, doc: &mut Document) {
         self.jumps.apply(transaction, doc);
+        if let Some((doc_id, selection)) = self.previous_selection.take() {
+            if doc_id != doc.id() {
+                self.previous_selection = Some((doc_id, selection));
+            } else {
+                // A selection captured against a newer document state than this
+                // changeset's input cannot be mapped through it. That only
+                // happens when the remembered selection is already stale, so
+                // forget it rather than map a position out of range.
+                let max_pos = selection.ranges().iter().map(|range| range.to()).max();
+                if max_pos.unwrap_or(0) <= transaction.changes().len() {
+                    let mapped = selection
+                        .map(transaction.changes())
+                        .ensure_invariants(doc.text().slice(..));
+                    self.previous_selection = Some((doc_id, mapped));
+                }
+            }
+        }
         self.doc_revisions
             .insert(doc.id(), doc.get_current_revision());
     }
@@ -707,6 +732,26 @@ impl View {
         // `ChangeSet::update_positions` when the document has since grown.
         self.sync_changes(doc);
         self.jumps.push(jump);
+    }
+
+    /// Remember a selection so it can be replayed later. The selection is valid
+    /// at the document's current revision, so the view is synced to that
+    /// revision first for the same reason push_jump does it. Otherwise the
+    /// remembered selection would be left ahead of the tracked revision and the
+    /// next edit-mapping would panic mapping it through a stale changeset.
+    pub fn remember_selection(&mut self, doc: &mut Document, selection: Selection) {
+        self.sync_changes(doc);
+        self.previous_selection = Some((doc.id(), selection));
+    }
+
+    /// The remembered selection, but only when it belongs to the given
+    /// document. A selection remembered in one buffer must not be replayed into
+    /// another.
+    pub fn previous_selection(&self, doc_id: DocumentId) -> Option<&Selection> {
+        self.previous_selection
+            .as_ref()
+            .filter(|(id, _)| *id == doc_id)
+            .map(|(_, selection)| selection)
     }
 }
 
