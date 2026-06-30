@@ -231,3 +231,12 @@ mine
 Plugin/script: unlikely
 
 Implement a transaction system for WorkspaceEdit.
+
+## select-previous-selection
+
+**Origin:**
+mine
+
+Plugin/script: likely once hooks are in place
+
+Remember the last selection and allow it to be replayed.
