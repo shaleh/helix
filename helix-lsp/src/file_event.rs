@@ -223,10 +223,10 @@ impl Handler {
                         registration_id
                     );
 
-                    if !state
+                    if state
                         .clients
                         .get(&client_.id())
-                        .is_some_and(|state| !state.client.ptr_eq(&client))
+                        .is_none_or(|state| state.client.ptr_eq(&client))
                     {
                         state.purge_client(client_.id());
                     }
