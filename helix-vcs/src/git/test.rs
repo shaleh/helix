@@ -165,10 +165,7 @@ fn conflict_detected_in_changed_files() {
     let file = repo.join("file.txt");
 
     // Create initial commit on main
-    File::create(&file)
-        .unwrap()
-        .write_all(b"initial")
-        .unwrap();
+    File::create(&file).unwrap().write_all(b"initial").unwrap();
     create_commit(repo, true);
 
     // Create a branch and modify the file
@@ -201,7 +198,7 @@ fn conflict_detected_in_changed_files() {
 
     // Collect changed files and verify a conflict is reported
     let found_conflict = std::cell::Cell::new(false);
-    git::for_each_changed_file(repo, |result| {
+    git::for_each_changed_file(repo, true, |result| {
         if let Ok(FileChange::Conflict { .. }) = result {
             found_conflict.set(true);
         }
