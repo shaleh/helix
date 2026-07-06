@@ -27,6 +27,7 @@ use helix_view::{
     document::{Mode, SCRATCH_BUFFER_NAME},
     editor::{CompleteAction, CursorShapeConfig},
     graphics::{Color, CursorKind, Modifier, Rect, Style},
+    gutter::GutterFocus,
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     keyboard::{KeyCode, KeyModifiers},
     Document, Editor, Theme, View,
@@ -175,7 +176,10 @@ impl EditorView {
                 view,
                 view.area,
                 theme,
-                is_focused & self.terminal_focused,
+                GutterFocus {
+                    view: is_focused,
+                    terminal: self.terminal_focused,
+                },
                 &mut decorations,
             );
         }
@@ -718,7 +722,7 @@ impl EditorView {
         view: &View,
         viewport: Rect,
         theme: &Theme,
-        is_focused: bool,
+        focus: GutterFocus,
         decoration_manager: &mut DecorationManager<'d>,
     ) {
         let text = doc.text().slice(..);
@@ -736,7 +740,7 @@ impl EditorView {
         let gutter_selected_style_virtual = theme.get("ui.gutter.selected.virtual");
 
         for gutter_type in view.gutters() {
-            let mut gutter = gutter_type.style(editor, doc, view, theme, is_focused);
+            let mut gutter = gutter_type.style(editor, doc, view, theme, focus);
             let width = gutter_type.width(view, doc);
             // avoid lots of small allocations by reusing a text buffer for each line
             let mut text = String::with_capacity(width);
