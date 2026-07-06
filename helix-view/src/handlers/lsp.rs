@@ -1,5 +1,5 @@
 use std::collections::btree_map::Entry;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 
 use crate::editor::Action;
@@ -57,8 +57,6 @@ pub enum ApplyEditErrorKind {
     FileNotFound,
     InvalidUrl(helix_core::uri::UrlConversionError),
     IoError(std::io::Error),
-    // TODO: check edits before applying and propagate failure
-    // InvalidEdit,
 }
 
 impl From<std::io::Error> for ApplyEditErrorKind {
@@ -84,14 +82,30 @@ impl Display for ApplyEditErrorKind {
     }
 }
 
+fn collect_text_edits(
+    edits: &[lsp::OneOf<lsp::TextEdit, lsp::AnnotatedTextEdit>],
+) -> Vec<lsp::TextEdit> {
+    edits
+        .iter()
+        .map(|edit| match edit {
+            lsp::OneOf::Left(text_edit) => text_edit,
+            lsp::OneOf::Right(annotated_text_edit) => &annotated_text_edit.text_edit,
+        })
+        .cloned()
+        .collect()
+}
+
 impl Editor {
-    fn apply_text_edits(
+    /// Resolve the target of a text edit and confirm it can be edited.
+    ///
+    /// This opens the buffer and checks the document version when one is given.
+    /// It changes no document content, so it is safe to run as a validation
+    /// step before any edit in a workspace edit is applied.
+    fn validate_text_edit_target(
         &mut self,
         url: &helix_lsp::Url,
         version: Option<i32>,
-        text_edits: Vec<lsp::TextEdit>,
-        offset_encoding: OffsetEncoding,
-    ) -> Result<(), ApplyEditErrorKind> {
+    ) -> Result<DocumentId, ApplyEditErrorKind> {
         let uri = match Uri::try_from(url) {
             Ok(uri) => uri,
             Err(err) => {
@@ -125,18 +139,81 @@ impl Editor {
             }
         }
 
+        Ok(doc_id)
+    }
+
+    /// Apply one document's edits and commit them to history.
+    fn apply_resolved_text_edits(
+        &mut self,
+        doc_id: DocumentId,
+        text_edits: Vec<lsp::TextEdit>,
+        offset_encoding: OffsetEncoding,
+    ) {
         // Need to determine a view for apply/append_changes_to_history
         let view_id = self.get_synced_view_id(doc_id);
         let doc = doc_mut!(self, &doc_id);
-
         let transaction = generate_transaction_from_edits(doc.text(), text_edits, offset_encoding);
         let view = view_mut!(self, view_id);
-        doc.apply(&transaction, view.id);
+        // Validation opened the buffer and matched its version, and the
+        // transaction is built from the same text it is applied to here. No
+        // path is left for apply to fail. A false return means an invariant
+        // broke, so make it loud in tests and visible in release.
+        let applied = doc.apply(&transaction, view.id);
+        debug_assert!(
+            applied,
+            "workspace edit failed to apply to {doc_id:?} after validation"
+        );
+        if !applied {
+            log::error!("workspace edit failed to apply to {doc_id:?} after validation");
+        }
         doc.append_changes_to_history(view);
+    }
+
+    /// Apply a single text edit immediately, opening and version-checking the
+    /// target first. Used by the abort path where edits are applied in order.
+    fn apply_text_edit_group(
+        &mut self,
+        url: &helix_lsp::Url,
+        version: Option<i32>,
+        text_edits: Vec<lsp::TextEdit>,
+        offset_encoding: OffsetEncoding,
+    ) -> Result<(), ApplyEditErrorKind> {
+        let doc_id = self.validate_text_edit_target(url, version)?;
+        self.apply_resolved_text_edits(doc_id, text_edits, offset_encoding);
         Ok(())
     }
 
-    // TODO make this transactional (and set failureMode to transactional)
+    /// Apply a set of text edits atomically.
+    ///
+    /// Every edit is resolved and version-checked before any of them is
+    /// applied. If validation fails the whole set is rejected and no document
+    /// is touched. Edits targeting the same document are combined into one
+    /// transaction so their offsets stay correct. Combining relies on the LSP
+    /// rule that edits within a workspace edit do not overlap. Overlapping
+    /// edits are dropped when the transaction is built.
+    fn apply_text_edits_transactionally<'a>(
+        &mut self,
+        edits: impl Iterator<Item = (&'a helix_lsp::Url, Option<i32>, Vec<lsp::TextEdit>)>,
+        offset_encoding: OffsetEncoding,
+    ) -> Result<(), ApplyEditError> {
+        let mut grouped: HashMap<DocumentId, Vec<lsp::TextEdit>> = HashMap::new();
+        for (i, (url, version, text_edits)) in edits.enumerate() {
+            let doc_id = self
+                .validate_text_edit_target(url, version)
+                .map_err(|kind| ApplyEditError {
+                    kind,
+                    failed_change_idx: i,
+                })?;
+            grouped.entry(doc_id).or_default().extend(text_edits);
+        }
+
+        for (doc_id, text_edits) in grouped {
+            self.apply_resolved_text_edits(doc_id, text_edits, offset_encoding);
+        }
+
+        Ok(())
+    }
+
     pub fn apply_workspace_edit(
         &mut self,
         offset_encoding: OffsetEncoding,
@@ -145,69 +222,69 @@ impl Editor {
         if let Some(ref document_changes) = workspace_edit.document_changes {
             match document_changes {
                 lsp::DocumentChanges::Edits(document_edits) => {
-                    for (i, document_edit) in document_edits.iter().enumerate() {
-                        let edits = document_edit
-                            .edits
-                            .iter()
-                            .map(|edit| match edit {
-                                lsp::OneOf::Left(text_edit) => text_edit,
-                                lsp::OneOf::Right(annotated_text_edit) => {
-                                    &annotated_text_edit.text_edit
-                                }
-                            })
-                            .cloned()
-                            .collect();
-                        self.apply_text_edits(
-                            &document_edit.text_document.uri,
-                            document_edit.text_document.version,
-                            edits,
-                            offset_encoding,
-                        )
-                        .map_err(|kind| ApplyEditError {
-                            kind,
-                            failed_change_idx: i,
-                        })?;
-                    }
+                    self.apply_text_edits_transactionally(
+                        document_edits.iter().map(|document_edit| {
+                            (
+                                &document_edit.text_document.uri,
+                                document_edit.text_document.version,
+                                collect_text_edits(&document_edit.edits),
+                            )
+                        }),
+                        offset_encoding,
+                    )?;
                 }
                 lsp::DocumentChanges::Operations(operations) => {
                     log::debug!("document changes - operations: {:?}", operations);
-                    for (i, operation) in operations.iter().enumerate() {
-                        match operation {
-                            lsp::DocumentChangeOperation::Op(op) => {
-                                self.apply_document_resource_op(op).map_err(|err| {
-                                    ApplyEditError {
-                                        kind: err,
-                                        failed_change_idx: i,
-                                    }
-                                })?;
-                            }
-
-                            lsp::DocumentChangeOperation::Edit(document_edit) => {
-                                let edits = document_edit
-                                    .edits
-                                    .iter()
-                                    .map(|edit| match edit {
-                                        lsp::OneOf::Left(text_edit) => text_edit,
-                                        lsp::OneOf::Right(annotated_text_edit) => {
-                                            &annotated_text_edit.text_edit
+                    let has_resource_op = operations
+                        .iter()
+                        .any(|op| matches!(op, lsp::DocumentChangeOperation::Op(_)));
+                    if has_resource_op {
+                        // Resource operations create, rename, and delete files.
+                        // They are not reversible, so the whole edit falls back
+                        // to applying each change in order and stopping at the
+                        // first failure. Edits are applied as they appear rather
+                        // than grouped per document, because order matters once
+                        // resource operations are interleaved with them.
+                        for (i, operation) in operations.iter().enumerate() {
+                            match operation {
+                                lsp::DocumentChangeOperation::Op(op) => {
+                                    self.apply_document_resource_op(op).map_err(|kind| {
+                                        ApplyEditError {
+                                            kind,
+                                            failed_change_idx: i,
                                         }
-                                    })
-                                    .cloned()
-                                    .collect();
-                                self.apply_text_edits(
-                                    &document_edit.text_document.uri,
-                                    document_edit.text_document.version,
-                                    edits,
-                                    offset_encoding,
-                                )
-                                .map_err(|kind| {
-                                    ApplyEditError {
-                                        kind,
-                                        failed_change_idx: i,
-                                    }
-                                })?;
+                                    })?;
+                                }
+                                lsp::DocumentChangeOperation::Edit(document_edit) => {
+                                    self.apply_text_edit_group(
+                                        &document_edit.text_document.uri,
+                                        document_edit.text_document.version,
+                                        collect_text_edits(&document_edit.edits),
+                                        offset_encoding,
+                                    )
+                                    .map_err(|kind| {
+                                        ApplyEditError {
+                                            kind,
+                                            failed_change_idx: i,
+                                        }
+                                    })?;
+                                }
                             }
                         }
+                    } else {
+                        // No resource operations, so this is pure text and can
+                        // be applied atomically.
+                        self.apply_text_edits_transactionally(
+                            operations.iter().filter_map(|operation| match operation {
+                                lsp::DocumentChangeOperation::Edit(document_edit) => Some((
+                                    &document_edit.text_document.uri,
+                                    document_edit.text_document.version,
+                                    collect_text_edits(&document_edit.edits),
+                                )),
+                                lsp::DocumentChangeOperation::Op(_) => None,
+                            }),
+                            offset_encoding,
+                        )?;
                     }
                 }
             }
@@ -217,14 +294,12 @@ impl Editor {
 
         if let Some(ref changes) = workspace_edit.changes {
             log::debug!("workspace changes: {:?}", changes);
-            for (i, (uri, text_edits)) in changes.iter().enumerate() {
-                let text_edits = text_edits.to_vec();
-                self.apply_text_edits(uri, None, text_edits, offset_encoding)
-                    .map_err(|kind| ApplyEditError {
-                        kind,
-                        failed_change_idx: i,
-                    })?;
-            }
+            self.apply_text_edits_transactionally(
+                changes
+                    .iter()
+                    .map(|(uri, text_edits)| (uri, None, text_edits.to_vec())),
+                offset_encoding,
+            )?;
         }
 
         Ok(())
