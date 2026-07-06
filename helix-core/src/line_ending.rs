@@ -100,6 +100,19 @@ impl LineEnding {
         }
     }
 
+    /// Creates a `LineEnding` from a vim `fileformat` option value.
+    ///
+    /// Maps: `"unix"` → LF, `"dos"` → CRLF, `"mac"` → CR (requires `unicode-lines` feature).
+    pub fn from_vim_option(fileformat: &str) -> Option<LineEnding> {
+        match fileformat {
+            "unix" => Some(LineEnding::LF),
+            "dos" => Some(LineEnding::Crlf),
+            #[cfg(feature = "unicode-lines")]
+            "mac" => Some(LineEnding::CR),
+            _ => None,
+        }
+    }
+
     #[inline]
     pub fn from_rope_slice(g: &RopeSlice) -> Option<LineEnding> {
         if let Some(text) = g.as_str() {
