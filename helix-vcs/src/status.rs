@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn sort_key_alphabetical_within_same_type() {
-        let mut changes = vec![
+        let mut changes = [
             FileChange::Conflict {
                 path: "z_file.txt".into(),
             },
