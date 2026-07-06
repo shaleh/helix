@@ -78,6 +78,7 @@
 | `:get-option`, `:get` | Get the current value of a config option. |
 | `:sort` | Sort ranges in selection. |
 | `:reflow` | Hard-wrap the current selection of lines to a given width. |
+| `:to-case`, `:case` | Convert each selection to the given identifier case: snake, screaming, kebab, camel, pascal, or title. |
 | `:tree-sitter-subtree`, `:ts-subtree` | Display the smallest tree-sitter subtree that spans the primary selection, primarily for debugging queries. |
 | `:config-reload` | Refresh user config. |
 | `:config-open` | Open the user config.toml file. |
