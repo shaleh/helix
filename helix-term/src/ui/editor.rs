@@ -25,7 +25,7 @@ use helix_core::{
 use helix_view::{
     annotations::diagnostics::DiagnosticFilter,
     document::{Mode, SCRATCH_BUFFER_NAME},
-    editor::{CompleteAction, CursorShapeConfig},
+    editor::{CompleteAction, CursorShapeConfig, DocumentColorDisplay},
     graphics::{Color, CursorKind, Modifier, Rect, Style},
     gutter::GutterFocus,
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
@@ -142,6 +142,12 @@ impl EditorView {
 
         if let Some(overlay) = Self::doc_document_link_highlights(doc, theme) {
             overlays.push(overlay);
+        }
+
+        if config.lsp.document_color == DocumentColorDisplay::Foreground {
+            if let Some(overlay) = Self::doc_document_color_highlights(doc) {
+                overlays.push(overlay);
+            }
         }
 
         Self::doc_diagnostics_highlights_into(doc, theme, &mut overlays);
@@ -529,6 +535,26 @@ impl EditorView {
         }
 
         Some(OverlayHighlights::Homogeneous { highlight, ranges })
+    }
+
+    /// Paint each LSP document color literal in its own color.
+    pub fn doc_document_color_highlights(doc: &Document) -> Option<OverlayHighlights> {
+        let document_colors = doc.document_colors.as_ref()?;
+        if document_colors.ranges.is_empty() {
+            return None;
+        }
+
+        // The handler sorts colors by position and the language server reports
+        // non-overlapping ranges, so these arrive sorted and non-overlapping the way
+        // a heterogenous overlay requires.
+        let highlights = document_colors
+            .colors
+            .iter()
+            .copied()
+            .zip(document_colors.ranges.iter().cloned())
+            .collect();
+
+        Some(OverlayHighlights::Heterogenous { highlights })
     }
 
     /// Get highlight spans for selections in a document view.
