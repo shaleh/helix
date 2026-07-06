@@ -19,6 +19,7 @@
   - [`[editor.gutters.diff]` Section](#editorguttersdiff-section)
   - [`[editor.gutters.spacer]` Section](#editorguttersspacer-section)
   - [`[editor.gutters.code-action-hint]` Section](#editorgutterscode-action-hint-section)
+  - [`[editor.gutters.blame]` Section](#editorguttersblame-section)
 - [`[editor.soft-wrap]` Section](#editorsoft-wrap-section)
 - [`[editor.smart-tab]` Section](#editorsmart-tab-section)
 - [`[editor.inline-diagnostics]` Section](#editorinline-diagnostics-section)
@@ -40,7 +41,7 @@
 | `cursorline` | Highlight all lines with a cursor | `false` |
 | `cursorcolumn` | Highlight all columns with a cursor | `false` |
 | `continue-comments` | if helix should automatically add a line comment token if you create a new line inside a comment. | `true` |
-| `gutters` | Gutters to display: Available are `diagnostics` and `diff` and `line-numbers` and `spacer` and `code-action-hint`, note that `diagnostics` also includes other features like breakpoints, 1-width padding will be inserted if gutters is non-empty | `["diagnostics", "spacer", "line-numbers", "spacer", "diff"]` |
+| `gutters` | Gutters to display: Available are `diagnostics`, `diff`, `line-numbers`, `spacer`, `code-action-hint`, and `blame`. Note that `diagnostics` also includes other features like breakpoints; 1-width padding will be inserted if gutters is non-empty. | `["diagnostics", "spacer", "line-numbers", "spacer", "diff"]` |
 | `auto-completion` | Enable automatic pop up of auto-completion | `true` |
 | `path-completion` | Enable filepath completion. Show files and directories if an existing path at the cursor was recognized, either absolute or relative to the current opened document or current working directory (if the buffer is not yet saved). Defaults to true. | `true` |
 | `auto-format` | Enable automatic formatting on save[^3] | `true` |
@@ -441,6 +442,34 @@ Currently unused
 The `code-action-hint` gutter option displays an indicator for whether a code action is available at current selection.
 
 There are currently no options for this section.
+#### `[editor.gutters.blame]` Section
+
+The `blame` gutter shows the abbreviated commit hash and an age suffix
+(`5m`, `3h`, `2d`, `1w`, `2M`, `1y`) for the commit that introduced each
+line. Blame is fetched in the background when a file is opened, and
+refreshed after each successful save.
+
+There are currently no options for this section.
+
+Behavior worth knowing:
+
+- Lines you have edited but not yet committed render blank in the
+  blame gutter. The gutter consults the diff against `HEAD` and treats
+  any line inside an added or modified hunk as uncommitted.
+- Lines below an edit still display the correct attribution. The
+  renderer translates the buffer line back to its corresponding line
+  in `HEAD` before looking up blame.
+- If you commit the open file from another terminal, the gutter stays
+  stale until your next `:write` (which re-fetches blame) or until
+  you run `:reload`. External git operations are not watched.
+- If `blame` is not listed in `gutters`, no blame work runs for that
+  file -- helix incurs no cost for the feature when you don't have it
+  on screen. (Blame is computed in-process via `gix`; there's no
+  subprocess either way, but the gix-side traversal can be expensive
+  on large histories.)
+- Adding `blame` to `gutters` at runtime back-fills attribution for
+  every currently open file in the background, so the data shows up
+  without reopening anything.
 
 ### `[editor.soft-wrap]` Section
 
