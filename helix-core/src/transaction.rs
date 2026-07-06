@@ -371,6 +371,13 @@ impl ChangeSet {
         self.changes.is_empty() || self.changes == [Operation::Retain(self.len)]
     }
 
+    /// The document length this changeset expects as its input. Positions past
+    /// this length belong to a newer document state and cannot be mapped.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     /// Map a (mostly) *sorted* list of positions through the changes.
     ///
     /// This is equivalent to updating each position with `map_pos`:

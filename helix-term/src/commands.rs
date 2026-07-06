@@ -369,6 +369,7 @@ impl MappableCommand {
         page_cursor_half_up, "Move page and cursor half up",
         page_cursor_half_down, "Move page and cursor half down",
         select_all, "Select whole document",
+        select_previous_selection, "Replay the previous selection",
         select_regex, "Select all regex matches inside selections",
         split_selection, "Split selections on regex matches",
         split_selection_on_newline, "Split selection on newlines",
@@ -2188,7 +2189,18 @@ fn select_all(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
 
     let end = doc.text().len_chars();
-    doc.set_selection(view.id, Selection::single(0, end))
+    let selection = Selection::single(0, end);
+    view.remember_selection(doc, selection.clone());
+    doc.set_selection(view.id, selection);
+}
+
+fn select_previous_selection(cx: &mut Context) {
+    let (view, doc) = current!(cx.editor);
+    let Some(selection) = view.previous_selection(doc.id()).cloned() else {
+        return;
+    };
+    doc.set_selection(view.id, selection);
+    cx.editor.mode = Mode::Select;
 }
 
 fn select_regex(cx: &mut Context) {
@@ -2207,6 +2219,9 @@ fn select_regex(cx: &mut Context) {
             if let Some(selection) =
                 selection::select_on_matches(text, doc.selection(view.id), &regex)
             {
+                if event == PromptEvent::Validate {
+                    view.remember_selection(doc, selection.clone());
+                }
                 doc.set_selection(view.id, selection);
             } else if event == PromptEvent::Validate {
                 cx.editor.set_error("nothing selected");
@@ -6385,6 +6400,7 @@ fn select_textobject(cx: &mut Context, objtype: textobject::TextObject) {
                         _ => range,
                     }
                 });
+                view.remember_selection(doc, selection.clone());
                 doc.set_selection(view.id, selection);
             };
             cx.editor.apply_motion(textobject);
