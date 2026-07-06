@@ -1,0 +1,5 @@
+#!/bin/sh
+
+{ echo master; bin/daily-driver-branches | sed 's/^/\t/'; } > "$(git rev-parse --git-path machete)"
+
+# After this run, git machete status and git machete traverse --no-push
