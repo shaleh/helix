@@ -207,6 +207,9 @@ macro_rules! lsp_request {
     ("window/showDocument") => {
         $crate::request::ShowDocument
     };
+    ("textDocument/switchSourceHeader") => {
+        $crate::request::SwitchSourceHeader
+    };
 }
 
 /// The initialize request is sent as the first request from the client to the server.
@@ -966,6 +969,18 @@ impl Request for TypeHierarchySubtypes {
     type Params = TypeHierarchySubtypesParams;
     type Result = Option<Vec<TypeHierarchyItem>>;
     const METHOD: &'static str = "typeHierarchy/subtypes";
+}
+
+/// The `textDocument/switchSourceHeader` request is sent from the client to the server to
+/// request the name of the matching source or header as appropriate.
+pub enum SwitchSourceHeader {}
+
+impl Request for SwitchSourceHeader {
+    type Params = TextDocumentIdentifier;
+    // clangd returns the URI of the matching file as a bare string, or an
+    // empty string when there is no match.
+    type Result = String;
+    const METHOD: &'static str = "textDocument/switchSourceHeader";
 }
 
 #[cfg(test)]

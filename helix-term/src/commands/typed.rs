@@ -6,6 +6,7 @@ use crate::job::Job;
 
 use super::*;
 
+use futures_util::stream::FuturesUnordered;
 use helix_core::command_line::{Args, Flag, Signature, Token, TokenKind};
 use helix_core::fuzzy::fuzzy_match;
 use helix_core::indent::MAX_INDENT;
@@ -15,6 +16,7 @@ use helix_view::document::{read_to_string, DEFAULT_LANGUAGE_NAME};
 use helix_view::editor::{CloseError, ConfigEvent};
 use helix_view::expansion;
 use serde_json::Value;
+use tokio_stream::StreamExt;
 use ui::completers::{self, Completer};
 
 #[derive(Clone)]
@@ -2910,6 +2912,70 @@ fn yank_diagnostic(
     Ok(())
 }
 
+fn switch_source_header(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let (_view, doc) = current!(cx.editor);
+
+    // switchSourceHeader is an LSP extension with no advertised server
+    // capability. Send it to every attached server and take the first that
+    // answers with a file we can open. Servers that do not implement it just
+    // error out and get skipped.
+    let mut futures: FuturesUnordered<_> = doc
+        .language_servers()
+        .filter_map(|language_server| {
+            language_server.text_document_switch_source_header(doc.identifier())
+        })
+        .collect();
+
+    if futures.is_empty() {
+        cx.editor
+            .set_error("No configured language server supports switch-source-header");
+        return Ok(());
+    }
+
+    let callback = async move {
+        let mut switch_path = None;
+        while let Some(result) = futures.next().await {
+            match result {
+                // clangd returns an empty string when it has no match.
+                Ok(uri) if uri.is_empty() => {}
+                Ok(uri) => match helix_lsp::lsp::Url::parse(&uri).map(|url| url.to_file_path()) {
+                    Ok(Ok(path)) => {
+                        switch_path = Some(path);
+                        break;
+                    }
+                    _ => log::error!("switch source header returned an unusable uri: {uri}"),
+                },
+                Err(err) => log::error!("switch source header request failed: {err}"),
+            }
+        }
+
+        let call: job::Callback = job::Callback::EditorCompositor(Box::new(
+            move |editor: &mut Editor, _compositor: &mut Compositor| {
+                let Some(path) = switch_path else {
+                    editor.set_error("switch-source-header: no matching file found");
+                    return;
+                };
+                if let Err(err) = editor.open(&path, Action::Replace) {
+                    editor.set_error(format!("failed to open {}: {err:?}", path.display()));
+                }
+            },
+        ));
+        Ok(call)
+    };
+
+    cx.jobs.callback(callback);
+
+    Ok(())
+}
+
 fn read(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -4106,6 +4172,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &[],
         doc: "Mark the current workspace as never-prompt. Never prompts for trust again.",
         fun: exclude_workspace,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, None), ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "switch-source-header",
+        aliases: &[],
+        doc: "LSP textDocument/SwitchSourceHeader",
+        fun: switch_source_header,
         completer: CommandCompleter::none(),
         signature: Signature { positionals: (0, None), ..Signature::DEFAULT },
     }
