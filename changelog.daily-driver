@@ -240,3 +240,12 @@ mine
 Plugin/script: likely once hooks are in place
 
 Remember the last selection and allow it to be replayed.
+
+## switch-source-header
+
+**Origin:**
+mine
+
+Plugin/script: unlikely
+
+Implement textDocument/switchSourceHeader. See https://clangd.llvm.org/extensions.html#switch-between-sourceheader
