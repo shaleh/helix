@@ -315,6 +315,36 @@ impl View {
 
         let cursor = doc.selection(self.id).primary().cursor(doc_text);
         let mut offset = view_offset;
+
+        // Without soft-wrap, avoid the expensive visual_offset_from_anchor
+        // traversal for horizontal-only scroll changes. When the cursor is on
+        // the same document line as the anchor, the vertical position hasn't
+        // changed so we only need the column (which block checkpoints make
+        // cheap).
+        if !text_fmt.soft_wrap {
+            let anchor_line = doc_text.char_to_line(offset.anchor.min(doc_text.len_chars()));
+            let cursor_line = doc_text.char_to_line(cursor.min(doc_text.len_chars()));
+
+            if anchor_line == cursor_line {
+                let (pos_in_block, block_start) =
+                    visual_offset_from_block(doc_text, cursor, cursor, &text_fmt, &annotations);
+                let col = block_start + pos_in_block.col;
+
+                let last_col =
+                    offset.horizontal_offset + viewport.width.saturating_sub(1) as usize;
+                if col > last_col.saturating_sub(scrolloff_right) {
+                    offset.horizontal_offset += col - (last_col.saturating_sub(scrolloff_right))
+                } else if col < offset.horizontal_offset + scrolloff_left {
+                    offset.horizontal_offset = col.saturating_sub(scrolloff_left)
+                };
+
+                if !CENTERING && offset == view_offset {
+                    return None;
+                }
+                return Some(offset);
+            }
+        }
+
         let off = visual_offset_from_anchor(
             doc_text,
             offset.anchor,
@@ -354,7 +384,6 @@ impl View {
         if text_fmt.soft_wrap {
             offset.horizontal_offset = 0;
         } else {
-            // determine the current visual column of the text
             let col = off
                 .unwrap_or_else(|_| {
                     visual_offset_from_block(
