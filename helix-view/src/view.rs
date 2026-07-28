@@ -18,6 +18,7 @@ use helix_core::{
 };
 
 use std::{
+    cell::Cell,
     collections::{HashMap, VecDeque},
     fmt,
 };
@@ -135,6 +136,13 @@ impl JumpList {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct RowOffsetCache {
+    anchor: usize,
+    doc_version: i32,
+    row_off: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Copy, Default)]
 pub struct ViewPosition {
     pub anchor: usize,
@@ -172,6 +180,7 @@ pub struct View {
     // left to future work. For now we treat all views as focused and give them
     // each their own handler.
     pub diagnostics_handler: DiagnosticsHandler,
+    row_offset_cache: Cell<RowOffsetCache>,
 }
 
 impl fmt::Debug for View {
@@ -197,6 +206,7 @@ impl View {
             gutters,
             doc_revisions: HashMap::new(),
             diagnostics_handler: DiagnosticsHandler::new(),
+            row_offset_cache: Cell::new(RowOffsetCache::default()),
         }
     }
 
@@ -205,6 +215,32 @@ impl View {
             self.docs_access_history.remove(pos);
         }
         self.docs_access_history.push(id);
+    }
+
+    pub fn row_off(
+        &self,
+        doc: &Document,
+        anchor: usize,
+        text_fmt: &TextFormat,
+        annotations: &TextAnnotations,
+    ) -> usize {
+        let cached = self.row_offset_cache.get();
+        if cached.anchor == anchor && cached.doc_version == doc.version() {
+            return cached.row_off;
+        }
+
+        let text = doc.text().slice(..);
+        let row_off =
+            visual_offset_from_block(text, anchor, anchor, text_fmt, annotations)
+                .0
+                .row;
+
+        self.row_offset_cache.set(RowOffsetCache {
+            anchor,
+            doc_version: doc.version(),
+            row_off,
+        });
+        row_off
     }
 
     pub fn inner_area(&self, doc: &Document) -> Rect {

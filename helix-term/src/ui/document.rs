@@ -38,6 +38,7 @@ pub fn render_document(
     overlay_highlights: Vec<syntax::OverlayHighlights>,
     theme: &Theme,
     decorations: DecorationManager,
+    row_off: Option<usize>,
 ) {
     let mut renderer = TextRenderer::new(
         surface,
@@ -56,6 +57,7 @@ pub fn render_document(
         overlay_highlights,
         theme,
         decorations,
+        row_off,
     )
 }
 
@@ -70,10 +72,13 @@ pub fn render_text(
     overlay_highlights: Vec<syntax::OverlayHighlights>,
     theme: &Theme,
     mut decorations: DecorationManager,
+    cached_row_off: Option<usize>,
 ) {
-    let row_off = visual_offset_from_block(text, anchor, anchor, text_fmt, text_annotations)
-        .0
-        .row;
+    let row_off = cached_row_off.unwrap_or_else(|| {
+        visual_offset_from_block(text, anchor, anchor, text_fmt, text_annotations)
+            .0
+            .row
+    });
 
     let mut formatter =
         DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, text_annotations, anchor);

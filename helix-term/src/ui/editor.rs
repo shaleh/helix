@@ -205,6 +205,8 @@ impl EditorView {
             inline_diagnostic_config,
             config.end_of_line_diagnostics,
         ));
+        let text_fmt = doc.text_format(inner.width, Some(theme));
+        let row_off = view.row_off(doc, view_offset.anchor, &text_fmt, &text_annotations);
         render_document(
             surface,
             inner,
@@ -215,6 +217,7 @@ impl EditorView {
             overlays,
             theme,
             decorations,
+            Some(row_off),
         );
 
         // if we're not at the edge of the screen, draw a right border
