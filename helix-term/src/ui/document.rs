@@ -136,10 +136,11 @@ pub fn render_text(
             decorations.decorate_line(renderer, last_line_pos);
         }
 
-        // Past the right edge of the viewport, skip rendering for this visual
-        // row. With soft-wrap this never fires because the formatter wraps
-        // before reaching the viewport edge.
+        // Past the right edge of the viewport, skip the rest of this line.
+        // With soft-wrap this never fires because the formatter wraps before
+        // reaching the viewport edge.
         if grapheme.visual_pos.col >= renderer.offset.col + renderer.viewport.width as usize {
+            formatter.skip_to_next_line(text);
             continue;
         }
 

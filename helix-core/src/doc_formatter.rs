@@ -438,6 +438,30 @@ impl<'t> DocumentFormatter<'t> {
     pub fn next_visual_pos(&self) -> Position {
         self.visual_pos
     }
+
+    /// Advance past the rest of the current document line without yielding
+    /// graphemes. The next call to `next()` will return the first grapheme
+    /// of the following line, or `None` at end of text.
+    pub fn skip_to_next_line(&mut self, text: RopeSlice<'t>) {
+        let total_lines = text.len_lines();
+        if self.line_pos + 1 >= total_lines {
+            self.exhausted = true;
+            return;
+        }
+
+        self.line_pos += 1;
+        let next_line_char = text.line_to_char(self.line_pos);
+        self.char_pos = next_line_char;
+        self.visual_pos.row += 1;
+        self.visual_pos.col = 0;
+        self.indent_level = None;
+        self.peeked_grapheme = None;
+        self.word_buf.clear();
+        self.word_i = 0;
+        self.inline_annotation_graphemes = None;
+        self.graphemes = text.slice(next_line_char..).graphemes();
+        self.annotations.reset_pos(next_line_char);
+    }
 }
 
 impl<'t> Iterator for DocumentFormatter<'t> {
