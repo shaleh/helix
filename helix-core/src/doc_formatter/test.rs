@@ -1,4 +1,4 @@
-use crate::doc_formatter::{DocumentFormatter, TextFormat};
+use crate::doc_formatter::{DocumentFormatter, TextFormat, BLOCK_SIZE};
 use crate::text_annotations::{InlineAnnotation, Overlay, TextAnnotations};
 
 impl TextFormat {
@@ -209,5 +209,62 @@ fn annotation_and_overlay() {
         )
         .collect_to_str(),
         "fooo  bar "
+    );
+}
+
+#[test]
+fn block_checkpoint_skips_long_line_prefix() {
+    let text = "x".repeat(BLOCK_SIZE * 3) + "\n";
+    let rope: crate::Rope = text.as_str().into();
+    let text_fmt = TextFormat::new_test(false);
+    let annotations = TextAnnotations::default();
+
+    let formatter = DocumentFormatter::new_at_prev_checkpoint(
+        rope.slice(..),
+        &text_fmt,
+        &annotations,
+        BLOCK_SIZE * 2 + 100,
+    );
+    assert_eq!(
+        formatter.next_char_pos(),
+        BLOCK_SIZE * 2,
+        "checkpoint should snap to the block boundary, not rewind to line start"
+    );
+
+    let formatter = DocumentFormatter::new_at_prev_checkpoint(
+        rope.slice(..),
+        &text_fmt,
+        &annotations,
+        BLOCK_SIZE - 1,
+    );
+    assert_eq!(
+        formatter.next_char_pos(),
+        0,
+        "positions within the first block should start at the line start"
+    );
+}
+
+#[test]
+fn block_checkpoint_visual_offset_consistency() {
+    use crate::visual_offset_from_block;
+
+    let text = "ab".repeat(BLOCK_SIZE * 2) + "\n";
+    let rope: crate::Rope = text.as_str().into();
+    let text_fmt = TextFormat::new_test(false);
+    let annotations = TextAnnotations::default();
+
+    let target = BLOCK_SIZE + 50;
+
+    let (full_pos, _) =
+        visual_offset_from_block(rope.slice(..), 0, target, &text_fmt, &annotations);
+
+    let (block_pos, block_start) =
+        visual_offset_from_block(rope.slice(..), target, target, &text_fmt, &annotations);
+
+    assert_eq!(block_pos.row, 0, "within a block there is only one row without soft-wrap");
+    assert_eq!(
+        full_pos.col,
+        block_start + block_pos.col,
+        "block-relative column plus block start should equal the absolute column"
     );
 }

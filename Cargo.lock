@@ -1518,6 +1518,7 @@ dependencies = [
  "arc-swap",
  "bitflags",
  "chrono",
+ "criterion",
  "encoding_rs",
  "foldhash 0.2.0",
  "globset",

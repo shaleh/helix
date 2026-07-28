@@ -58,5 +58,10 @@ globset.workspace = true
 regex-cursor = "0.1.5"
 
 [dev-dependencies]
+criterion.workspace = true
 quickcheck.workspace = true
 indoc = "2.0.6"
+
+[[bench]]
+name = "long_lines"
+harness = false

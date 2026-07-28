@@ -21,10 +21,12 @@ use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
 use helix_stdx::rope::{RopeGraphemes, RopeSliceExt};
 
-use crate::graphemes::{Grapheme, GraphemeStr};
+use crate::graphemes::{ensure_grapheme_boundary_prev, Grapheme, GraphemeStr};
 use crate::syntax::Highlight;
 use crate::text_annotations::TextAnnotations;
 use crate::{Position, RopeSlice};
+
+pub(crate) const BLOCK_SIZE: usize = 4096;
 
 #[derive(Debug, Clone, Copy)]
 pub enum GraphemeSource {
@@ -211,9 +213,18 @@ impl<'t> DocumentFormatter<'t> {
         annotations: &'t TextAnnotations,
         char_idx: usize,
     ) -> Self {
-        // TODO divide long lines into blocks to avoid bad performance for long lines
-        let block_line_idx = text.char_to_line(char_idx.min(text.len_chars()));
-        let block_char_idx = text.line_to_char(block_line_idx);
+        let char_idx = char_idx.min(text.len_chars());
+        let block_line_idx = text.char_to_line(char_idx);
+        let line_start = text.line_to_char(block_line_idx);
+        let offset_in_line = char_idx - line_start;
+
+        let block_char_idx = if offset_in_line >= BLOCK_SIZE {
+            let raw = line_start + (offset_in_line / BLOCK_SIZE) * BLOCK_SIZE;
+            ensure_grapheme_boundary_prev(text, raw)
+        } else {
+            line_start
+        };
+
         annotations.reset_pos(block_char_idx);
 
         DocumentFormatter {
