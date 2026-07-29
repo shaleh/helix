@@ -80,6 +80,7 @@ pub fn render_text(
     let mut syntax_highlighter =
         SyntaxHighlighter::new(syntax_highlighter, text, theme, renderer.text_style);
     let mut overlay_highlighter = OverlayHighlighter::new(overlay_highlights, theme);
+    overlay_highlighter.seek(anchor);
 
     let mut last_line_pos = LinePos {
         first_visual_line: false,
@@ -561,6 +562,11 @@ impl<'t> OverlayHighlighter<'t> {
         };
         highlighter.update_pos();
         highlighter
+    }
+
+    fn seek(&mut self, pos: usize) {
+        self.inner.seek(pos);
+        self.update_pos();
     }
 
     fn update_pos(&mut self) {

@@ -856,6 +856,19 @@ impl Overlay {
                 .map(|(_highlight, range)| range.start),
         }
     }
+
+    fn seek(&mut self, pos: usize) {
+        match &self.highlights {
+            OverlayHighlights::Homogeneous { ranges, .. } => {
+                let skip = ranges[self.idx..].partition_point(|r| r.end <= pos);
+                self.idx += skip;
+            }
+            OverlayHighlights::Heterogenous { highlights } => {
+                let skip = highlights[self.idx..].partition_point(|(_, r)| r.end <= pos);
+                self.idx += skip;
+            }
+        }
+    }
 }
 
 /// A collection of highlights to apply when rendering which merge on top of syntax highlights.
@@ -880,6 +893,19 @@ impl OverlayHighlighter {
             next_highlight_start,
             next_highlight_end: usize::MAX,
         }
+    }
+
+    /// Skip past overlay ranges that end before `pos`.
+    pub fn seek(&mut self, pos: usize) {
+        for overlay in &mut self.overlays {
+            overlay.seek(pos);
+        }
+        self.next_highlight_start = self
+            .overlays
+            .iter()
+            .filter_map(|overlay| overlay.start())
+            .min()
+            .unwrap_or(usize::MAX);
     }
 
     /// The current position in the overlay highlights.
