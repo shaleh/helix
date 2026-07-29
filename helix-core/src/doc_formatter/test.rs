@@ -268,3 +268,202 @@ fn block_checkpoint_visual_offset_consistency() {
         "block-relative column plus block start should equal the absolute column"
     );
 }
+
+#[test]
+fn skip_to_next_line_basic() {
+    let rope: crate::Rope = "aaabbb\ncccddd\neeefff\n".into();
+    let text_fmt = TextFormat::new_test(false);
+    let annotations = TextAnnotations::default();
+
+    let mut formatter = DocumentFormatter::new_at_prev_checkpoint(
+        rope.slice(..),
+        &text_fmt,
+        &annotations,
+        0,
+    );
+
+    // Consume the first grapheme ('a') then skip the rest of line 1.
+    let first = formatter.next().unwrap();
+    assert_eq!(first.raw.to_string(), "a");
+    assert_eq!(first.line_idx, 0);
+
+    formatter.skip_to_next_line(rope.slice(..));
+
+    // Next grapheme should be the start of line 2.
+    let after_skip = formatter.next().unwrap();
+    assert_eq!(after_skip.raw.to_string(), "c");
+    assert_eq!(after_skip.line_idx, 1);
+    assert_eq!(after_skip.visual_pos.col, 0);
+    assert_eq!(after_skip.visual_pos.row, 1);
+}
+
+#[test]
+fn skip_to_next_line_at_last_line() {
+    let rope: crate::Rope = "only_line\n".into();
+    let text_fmt = TextFormat::new_test(false);
+    let annotations = TextAnnotations::default();
+
+    let mut formatter = DocumentFormatter::new_at_prev_checkpoint(
+        rope.slice(..),
+        &text_fmt,
+        &annotations,
+        0,
+    );
+
+    let first = formatter.next().unwrap();
+    assert_eq!(first.raw.to_string(), "o");
+
+    // Rope "only_line\n" has two lines: line 0 = "only_line\n", line 1 = "".
+    // Skipping from line 0 moves to line 1 (the empty trailing line).
+    formatter.skip_to_next_line(rope.slice(..));
+    // The empty trailing line should produce the EOF grapheme then exhaust.
+    let eof = formatter.next().unwrap();
+    assert!(matches!(eof.source, crate::doc_formatter::GraphemeSource::Document { codepoints: 0 }));
+    assert!(formatter.next().is_none());
+}
+
+#[test]
+fn skip_to_next_line_consecutive() {
+    let rope: crate::Rope = "line1\nline2\nline3\nline4\n".into();
+    let text_fmt = TextFormat::new_test(false);
+    let annotations = TextAnnotations::default();
+
+    let mut formatter = DocumentFormatter::new_at_prev_checkpoint(
+        rope.slice(..),
+        &text_fmt,
+        &annotations,
+        0,
+    );
+
+    // Skip lines 1 and 2 entirely without consuming any graphemes from them.
+    formatter.skip_to_next_line(rope.slice(..));
+    formatter.skip_to_next_line(rope.slice(..));
+
+    let g = formatter.next().unwrap();
+    assert_eq!(g.raw.to_string(), "l");
+    assert_eq!(g.line_idx, 2);
+    assert_eq!(g.visual_pos.row, 2);
+    assert_eq!(g.visual_pos.col, 0);
+}
+
+#[test]
+fn skip_to_next_line_with_inline_annotations() {
+    let rope: crate::Rope = "ab\ncd\n".into();
+    let text_fmt = TextFormat::new_test(false);
+    let annots = [InlineAnnotation::new(0, "ZZ")];
+    let mut annotations = TextAnnotations::default();
+    let annotations = annotations.add_inline_annotations(&annots, None);
+
+    let mut formatter = DocumentFormatter::new_at_prev_checkpoint(
+        rope.slice(..),
+        &text_fmt,
+        annotations,
+        0,
+    );
+
+    // First grapheme is the inline annotation "Z" (first char of "ZZ").
+    let g = formatter.next().unwrap();
+    assert_eq!(g.raw.to_string(), "Z");
+
+    // Skip rest of line 1 (remaining annotation text + "ab\n").
+    formatter.skip_to_next_line(rope.slice(..));
+
+    // Should land cleanly on line 2 with no leftover annotation state.
+    let g = formatter.next().unwrap();
+    assert_eq!(g.raw.to_string(), "c");
+    assert_eq!(g.line_idx, 1);
+    assert_eq!(g.visual_pos.row, 1);
+    assert_eq!(g.visual_pos.col, 0);
+}
+
+#[test]
+fn skip_to_next_line_drops_virtual_lines() {
+    use crate::text_annotations::LineAnnotation;
+    use crate::Position;
+    use std::cell::Cell;
+
+    struct AddVirtualLines {
+        target_line: usize,
+        extra_rows: usize,
+        pos: Cell<usize>,
+    }
+
+    impl LineAnnotation for AddVirtualLines {
+        fn reset_pos(&mut self, char_idx: usize) -> usize {
+            self.pos.set(0);
+            let _ = char_idx;
+            usize::MAX
+        }
+
+        fn insert_virtual_lines(
+            &mut self,
+            _char_idx: usize,
+            _line_end_visual_pos: Position,
+            doc_line: usize,
+        ) -> Position {
+            if doc_line == self.target_line {
+                Position::new(self.extra_rows, 0)
+            } else {
+                Position::new(0, 0)
+            }
+        }
+    }
+
+    let rope: crate::Rope = "aaaa\nbbbb\ncccc\n".into();
+    let text_fmt = TextFormat::new_test(false);
+
+    // First: iterate normally (no skip) to get the "correct" row for line 2.
+    let mut annotations_normal = TextAnnotations::default();
+    annotations_normal.add_line_annotation(Box::new(AddVirtualLines {
+        target_line: 0,
+        extra_rows: 2,
+        pos: Cell::new(0),
+    }));
+
+    let mut fmt_normal = DocumentFormatter::new_at_prev_checkpoint(
+        rope.slice(..),
+        &text_fmt,
+        &annotations_normal,
+        0,
+    );
+    let mut line2_row_normal = None;
+    while let Some(g) = fmt_normal.next() {
+        if g.line_idx == 2 && line2_row_normal.is_none() {
+            line2_row_normal = Some(g.visual_pos.row);
+        }
+    }
+    let expected_row = line2_row_normal.unwrap();
+    // Line 0 takes 1 row + 2 virtual = 3, line 1 takes 1 row, so line 2
+    // should start at row 4.
+    assert_eq!(expected_row, 4, "sanity: line 2 should be at row 4 with 2 virtual lines after line 0");
+
+    // Now: skip line 0 and check what row line 2 gets.
+    let mut annotations_skip = TextAnnotations::default();
+    annotations_skip.add_line_annotation(Box::new(AddVirtualLines {
+        target_line: 0,
+        extra_rows: 2,
+        pos: Cell::new(0),
+    }));
+
+    let mut fmt_skip = DocumentFormatter::new_at_prev_checkpoint(
+        rope.slice(..),
+        &text_fmt,
+        &annotations_skip,
+        0,
+    );
+    fmt_skip.skip_to_next_line(rope.slice(..));
+
+    // Consume through to line 2.
+    let mut line2_row_skip = None;
+    while let Some(g) = fmt_skip.next() {
+        if g.line_idx == 2 && line2_row_skip.is_none() {
+            line2_row_skip = Some(g.visual_pos.row);
+        }
+    }
+    let actual_row = line2_row_skip.unwrap();
+
+    assert_eq!(
+        actual_row, expected_row,
+        "skip_to_next_line must account for virtual lines on the skipped line",
+    );
+}
