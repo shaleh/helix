@@ -80,8 +80,40 @@ pub fn render_text(
             .row
     });
 
+    // For non-softwrapped text with a large horizontal offset, start the
+    // formatter near the visible region instead of at the line start.
+    // Avoids iterating millions of off-screen graphemes on very long lines.
+    let (fmt_anchor, anchor_line) = if !text_fmt.soft_wrap && renderer.offset.col > 0 {
+        let line = text.char_to_line(anchor.min(text.len_chars()));
+        let line_start = text.line_to_char(line);
+        let line_len = text.line(line).len_chars();
+        let target_col = renderer.offset.col;
+        if target_col < line_len {
+            (line_start + target_col, Some((line, line_start)))
+        } else {
+            (anchor, None)
+        }
+    } else {
+        (anchor, None)
+    };
+
     let mut formatter =
-        DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, text_annotations, anchor);
+        DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, text_annotations, fmt_anchor);
+
+    // The block checkpoint snaps to a 4096-char boundary. The distance
+    // from the line start to that boundary approximates the block's
+    // visual column (exact for ASCII).
+    let (col_base, anchor_line) = match anchor_line {
+        Some((line, line_start)) => {
+            let block_start = formatter.next_char_pos();
+            if block_start > line_start {
+                (block_start - line_start, Some(line))
+            } else {
+                (0, None)
+            }
+        }
+        None => (0, None),
+    };
     let mut syntax_highlighter =
         SyntaxHighlighter::new(syntax_highlighter, text, theme, renderer.text_style);
     let mut overlay_highlighter = OverlayHighlighter::new(overlay_highlights, theme);
@@ -134,6 +166,13 @@ pub fn render_text(
                 visual_line: grapheme.visual_pos.row as u16,
             };
             decorations.decorate_line(renderer, last_line_pos);
+        }
+
+        // When we skipped ahead on the anchor's line, the formatter's
+        // visual_pos.col is relative to the block start. Add the block's
+        // offset from the line start to get the absolute column.
+        if col_base > 0 && Some(grapheme.line_idx) == anchor_line {
+            grapheme.visual_pos.col += col_base;
         }
 
         // Past the right edge of the viewport, skip the rest of this line.
