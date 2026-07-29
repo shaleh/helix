@@ -979,10 +979,17 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                 }
             }
 
+            let viewport_char_range = {
+                let rope = doc.text().slice(..);
+                let row = rope.char_to_line(offset.anchor.min(rope.len_chars()));
+                let byte_range = EditorView::viewport_byte_range(rope, row, area.height);
+                rope.byte_to_char(byte_range.start)..rope.byte_to_char(byte_range.end)
+            };
             EditorView::doc_diagnostics_highlights_into(
                 doc,
                 &cx.editor.theme,
                 &mut overlay_highlights,
+                viewport_char_range,
             );
 
             let mut decorations = DecorationManager::default();

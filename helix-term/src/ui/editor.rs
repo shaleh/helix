@@ -143,7 +143,13 @@ impl EditorView {
             overlays.push(overlay);
         }
 
-        Self::doc_diagnostics_highlights_into(doc, theme, &mut overlays);
+        let viewport_char_range = {
+            let text = doc.text().slice(..);
+            let row = text.char_to_line(view_offset.anchor.min(text.len_chars()));
+            let byte_range = Self::viewport_byte_range(text, row, inner.height);
+            text.byte_to_char(byte_range.start)..text.byte_to_char(byte_range.end)
+        };
+        Self::doc_diagnostics_highlights_into(doc, theme, &mut overlays, viewport_char_range);
 
         if is_focused {
             if config.lsp.auto_document_highlight {
@@ -276,7 +282,7 @@ impl EditorView {
             .for_each(|area| surface.set_style(area, ruler_theme))
     }
 
-    fn viewport_byte_range(
+    pub fn viewport_byte_range(
         text: helix_core::RopeSlice,
         row: usize,
         height: u16,
@@ -351,6 +357,7 @@ impl EditorView {
         doc: &Document,
         theme: &Theme,
         overlay_highlights: &mut Vec<OverlayHighlights>,
+        viewport_char_range: ops::Range<usize>,
     ) {
         // Skip redundant work if no diagnostics.
         if doc.diagnostics().is_empty() {
@@ -398,7 +405,13 @@ impl EditorView {
             }
         };
 
-        for diagnostic in doc.diagnostics() {
+        let diagnostics = doc.diagnostics();
+        let vp_start = viewport_char_range.start;
+        let vp_end = viewport_char_range.end;
+        let first = diagnostics.partition_point(|d| d.range.end < vp_start);
+        let last = diagnostics.partition_point(|d| d.range.start < vp_end);
+
+        for diagnostic in &diagnostics[first..last] {
             // Separate diagnostics into different Vecs by severity.
             let vec = match diagnostic.severity {
                 Some(Severity::Info) => &mut info_vec,
