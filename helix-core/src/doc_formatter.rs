@@ -270,6 +270,9 @@ impl<'t> DocumentFormatter<'t> {
     }
 
     fn advance_grapheme(&mut self, col: usize, char_pos: usize) -> Option<GraphemeWithSource<'t>> {
+        if self.exhausted {
+            return None;
+        }
         let (grapheme, source) =
             if let Some((grapheme, highlight)) = self.next_inline_annotation_grapheme(char_pos) {
                 (grapheme.into(), GraphemeSource::VirtualText { highlight })
@@ -449,10 +452,13 @@ impl<'t> DocumentFormatter<'t> {
             return;
         }
 
-        self.line_pos += 1;
-        let next_line_char = text.line_to_char(self.line_pos);
+        let next_line_char = text.line_to_char(self.line_pos + 1);
         self.char_pos = next_line_char;
-        self.visual_pos.row += 1;
+        let virtual_lines =
+            self.annotations
+                .virtual_lines_at(self.char_pos, self.visual_pos, self.line_pos);
+        self.line_pos += 1;
+        self.visual_pos.row += 1 + virtual_lines;
         self.visual_pos.col = 0;
         self.indent_level = None;
         self.peeked_grapheme = None;
