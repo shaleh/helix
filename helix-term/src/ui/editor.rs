@@ -116,13 +116,41 @@ impl EditorView {
             decorations.add_decoration(line_decoration);
         }
 
-        let syntax_highlighter =
-            Self::doc_syntax_highlighter(doc, view_offset.anchor, inner.height, &loader);
+        let text_fmt = doc.text_format(inner.width, Some(theme));
+
+        // For non-softwrapped views scrolled far right, narrow the syntax
+        // highlight range so tree-sitter skips events before the visible
+        // region. Without this the highlighter processes every event from
+        // the line start, which is O(line_length) per frame.
+        let render_char_start = if !text_fmt.soft_wrap && view_offset.horizontal_offset > 0 {
+            let text = doc.text().slice(..);
+            let line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
+            let line_start = text.line_to_char(line);
+            let line_len = text.line(line).len_chars();
+            let target = view_offset.horizontal_offset.min(line_len);
+            Some(line_start + target)
+        } else {
+            None
+        };
+
+        let syntax_highlighter = if let Some(start_char) = render_char_start {
+            doc.syntax().map(|syntax| {
+                let text = doc.text().slice(..);
+                let start_byte = text.char_to_byte(start_char);
+                let row = text.char_to_line(view_offset.anchor.min(text.len_chars()));
+                let range = Self::viewport_byte_range(text, row, inner.height);
+                syntax.highlighter(text, &loader, start_byte as u32..range.end as u32)
+            })
+        } else {
+            Self::doc_syntax_highlighter(doc, view_offset.anchor, inner.height, &loader)
+        };
+
         let mut overlays = Vec::new();
 
+        let overlay_anchor = render_char_start.unwrap_or(view_offset.anchor);
         overlays.push(Self::overlay_syntax_highlights(
             doc,
-            view_offset.anchor,
+            overlay_anchor,
             inner.height,
             &text_annotations,
         ));
@@ -205,7 +233,6 @@ impl EditorView {
             inline_diagnostic_config,
             config.end_of_line_diagnostics,
         ));
-        let text_fmt = doc.text_format(inner.width, Some(theme));
         let row_off = view.row_off(doc, view_offset.anchor, &text_fmt, &text_annotations);
         render_document(
             surface,
