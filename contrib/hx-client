@@ -1,0 +1,15 @@
+#!/bin/sh
+# Open files in the Helix session server for the current git repository.
+#
+# Derives the same socket path as hx-server (<repo-root>/.helix/session.sock)
+# and hands the given files to that running instance, then exits. If no server
+# is running for this repo, hx reports it and exits non-zero. Any extra
+# arguments are passed straight through to hx.
+set -eu
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+	echo "hx-client: not inside a git repository" >&2
+	exit 1
+}
+
+exec hx --connect "$(basename "$root")" --socket-path "$root/.helix/session.sock" "$@"

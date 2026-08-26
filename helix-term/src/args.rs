@@ -20,6 +20,9 @@ pub struct Args {
     pub config_file: Option<PathBuf>,
     pub files: IndexMap<PathBuf, Vec<Position>>,
     pub working_directory: Option<PathBuf>,
+    pub session: Option<String>,
+    pub connect: Option<String>,
+    pub socket_path: Option<PathBuf>,
 }
 
 impl Args {
@@ -91,6 +94,18 @@ impl Args {
                         anyhow::bail!("--working-dir must specify an initial working directory")
                     }
                 },
+                "--session" => match argv.next() {
+                    Some(name) => args.session = Some(name),
+                    None => anyhow::bail!("--session must specify a session name"),
+                },
+                "--connect" => match argv.next() {
+                    Some(name) => args.connect = Some(name),
+                    None => anyhow::bail!("--connect must specify a session name"),
+                },
+                "--socket-path" => match argv.next() {
+                    Some(path) => args.socket_path = Some(path.into()),
+                    None => anyhow::bail!("--socket-path must specify a path"),
+                },
                 arg if arg.starts_with("--") => {
                     anyhow::bail!("unexpected double dash argument: {}", arg)
                 }
@@ -131,7 +146,19 @@ impl Args {
             }
         }
 
+        args.check_session_flags()?;
+
         Ok(args)
+    }
+
+    fn check_session_flags(&self) -> Result<()> {
+        if self.session.is_some() && self.connect.is_some() {
+            anyhow::bail!("--session and --connect cannot be used together");
+        }
+        if self.socket_path.is_some() && self.session.is_none() && self.connect.is_none() {
+            anyhow::bail!("--socket-path requires --session or --connect");
+        }
+        Ok(())
     }
 }
 
@@ -167,4 +194,44 @@ fn split_path_row(s: &str) -> Option<(PathBuf, Position)> {
     let path = path.into();
     let pos = Position::new(row.saturating_sub(1), 0);
     Some((path, pos))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+
+    #[test]
+    fn session_and_connect_conflict() {
+        let args = Args {
+            session: Some("a".into()),
+            connect: Some("b".into()),
+            ..Args::default()
+        };
+        assert!(args.check_session_flags().is_err());
+    }
+
+    #[test]
+    fn session_alone_is_ok() {
+        let args = Args {
+            session: Some("a".into()),
+            ..Args::default()
+        };
+        assert!(args.check_session_flags().is_ok());
+    }
+
+    #[test]
+    fn socket_path_requires_a_mode() {
+        let orphan = Args {
+            socket_path: Some("/tmp/x.sock".into()),
+            ..Args::default()
+        };
+        assert!(orphan.check_session_flags().is_err());
+
+        let with_mode = Args {
+            connect: Some("a".into()),
+            socket_path: Some("/tmp/x.sock".into()),
+            ..Args::default()
+        };
+        assert!(with_mode.check_session_flags().is_ok());
+    }
 }

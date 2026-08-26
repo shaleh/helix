@@ -1,0 +1,17 @@
+#!/bin/sh
+# Run Helix as a session server scoped to the current git repository.
+#
+# The session socket lives at <repo-root>/.helix/session.sock. An hx-client
+# run anywhere inside the same repo derives the same path and connects to it.
+# Any extra arguments are passed straight through to hx (files, flags).
+set -eu
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+	echo "hx-server: not inside a git repository" >&2
+	exit 1
+}
+
+dir="$root/.helix"
+mkdir -p "$dir"
+
+exec hx --session "$(basename "$root")" --socket-path "$dir/session.sock" "$@"

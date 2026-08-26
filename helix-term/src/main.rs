@@ -60,6 +60,12 @@ FLAGS:
     -V, --version                  Print version information
     --vsplit                       Split all given files vertically into different windows
     --hsplit                       Split all given files horizontally into different windows
+    --session <name>               Listen on a named socket so `hx --connect <name>` can open
+                                   files in this instance (Unix only)
+    --connect <name>               Open the given files in a running `hx --session <name>`
+                                   instance, then exit (Unix only)
+    --socket-path <path>           Override the session socket path for --session/--connect
+                                   (also settable as `socket-path` in the editor config)
     -w, --working-dir <path>       Specify an initial working directory
     +[N]                           Open the first given file at line number N, or the last line, if
                                    N is not specified.
@@ -100,6 +106,11 @@ FLAGS:
         return Ok(0);
     }
 
+    #[cfg(not(unix))]
+    if args.connect.is_some() || args.session.is_some() {
+        anyhow::bail!("--session and --connect are only supported on Unix platforms");
+    }
+
     setup_logging(args.verbosity).context("failed to initialize logging")?;
 
     // NOTE: Set the working directory early so the correct configuration is loaded. Be aware that
@@ -129,6 +140,19 @@ FLAGS:
             Config::default()
         }
     };
+
+    // Client mode resolves the socket path from the same config the server
+    // uses, so a config `socket-path` makes both sides agree without
+    // repeating the flag.
+    #[cfg(unix)]
+    if let Some(session) = &args.connect {
+        let path = helix_term::session::resolve_socket_path(
+            session,
+            args.socket_path.as_deref(),
+            config.editor.socket_path.as_deref(),
+        )?;
+        return helix_term::session::run_client(&path, &args.files, args.split).await;
+    }
 
     let workspace_trust =
         helix_loader::workspace_trust::WorkspaceTrust::new((&config.editor.workspace_trust).into());

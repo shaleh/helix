@@ -140,6 +140,30 @@ pub fn data_dir() -> PathBuf {
     path
 }
 
+/// Directory that holds per-user helix session sockets.
+///
+/// Prefer the user's runtime directory. It is already per-user and
+/// short-lived. Fall back to a subdirectory of the cache dir when the
+/// runtime dir is not set.
+pub fn session_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let mut path = PathBuf::from(dir);
+        path.push("helix");
+        return path;
+    }
+    let mut path = cache_dir();
+    path.push("sessions");
+    path
+}
+
+/// Path to the socket for a named session.
+///
+/// The name is expected to be validated by the caller so it is safe to use
+/// as a single path component.
+pub fn session_socket(name: &str) -> PathBuf {
+    session_dir().join(format!("{name}.sock"))
+}
+
 pub fn config_file() -> PathBuf {
     CONFIG_FILE.get().map(|path| path.to_path_buf()).unwrap()
 }
@@ -356,5 +380,16 @@ mod merge_toml_tests {
                 .unwrap(),
             &vec![Value::String("lsp".into())]
         )
+    }
+}
+
+#[cfg(test)]
+mod session_path_tests {
+    #[test]
+    fn session_socket_path_ends_with_name_and_extension() {
+        let path = super::session_socket("proj");
+        assert_eq!(path.file_name().unwrap(), "proj.sock");
+        let parent = path.parent().unwrap();
+        assert!(parent.ends_with("helix") || parent.ends_with("sessions"));
     }
 }

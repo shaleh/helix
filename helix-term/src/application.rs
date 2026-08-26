@@ -79,6 +79,11 @@ pub struct Application {
     lsp_progress: LspProgressMap,
 
     theme_mode: Option<theme::Mode>,
+
+    // Held only so its Drop removes the session socket on a clean exit.
+    #[cfg(unix)]
+    #[allow(dead_code)]
+    session_guard: Option<crate::session::SocketGuard>,
 }
 
 #[cfg(feature = "integration")]
@@ -119,6 +124,8 @@ impl Application {
         let mut terminal = Terminal::new(backend)?;
         let area = terminal.size();
         let mut compositor = Compositor::new(area);
+        #[cfg(unix)]
+        let session_socket_override = config.editor.socket_path.clone();
         let config = Arc::new(ArcSwap::from_pointee(config));
         let handlers = handlers::setup(config.clone());
         let mut editor = Editor::new(
@@ -244,6 +251,25 @@ impl Application {
         ])
         .context("build signal handler")?;
 
+        #[cfg(unix)]
+        let session_guard = match &args.session {
+            Some(name) => {
+                let path = crate::session::resolve_socket_path(
+                    name,
+                    args.socket_path.as_deref(),
+                    session_socket_override.as_deref(),
+                )?;
+                let listener = crate::session::bind(&path)?;
+                let guard = crate::session::SocketGuard { path };
+                tokio::spawn(crate::session::serve(
+                    listener,
+                    crate::session::open_via_jobs,
+                ));
+                Some(guard)
+            }
+            None => None,
+        };
+
         let app = Self {
             compositor,
             terminal,
@@ -253,6 +279,8 @@ impl Application {
             jobs,
             lsp_progress: LspProgressMap::new(),
             theme_mode,
+            #[cfg(unix)]
+            session_guard,
         };
 
         Ok(app)

@@ -434,6 +434,10 @@ pub struct Config {
     pub buffer_picker: BufferPickerConfig,
     /// Workspace-trust configuration.
     pub workspace_trust: WorkspaceTrustConfig,
+    /// Path to the session socket used by `--session` and `--connect`.
+    /// Overrides the name-derived default. A `--socket-path` flag overrides
+    /// this in turn.
+    pub socket_path: Option<std::path::PathBuf>,
 }
 
 /// User-facing configuration for `[editor.workspace-trust]`.
@@ -1240,6 +1244,7 @@ impl Default for Config {
             kitty_keyboard_protocol: Default::default(),
             buffer_picker: BufferPickerConfig::default(),
             workspace_trust: WorkspaceTrustConfig::default(),
+            socket_path: None,
         }
     }
 }
